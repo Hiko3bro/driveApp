@@ -1,50 +1,83 @@
-# Welcome to your Expo app 👋
+# ドライブ発見アプリ (drive-discovery-app)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+## コンセプト
 
-## Get started
+このアプリは「行き先を決めるためのアプリ」ではありません。
 
-1. Install dependencies
+**何気ない時間や移動を、新しい発見と思い出に変えるアプリ**です。
 
-   ```bash
-   npm install
-   ```
+特に重視しているのは、旅行先で土地勘がないユーザーが、レンタカーの返却時刻や残り時間から、景色の良い道・穴場・寄り道を含むルートを見つけられる体験です。目的地ありきの効率的なナビではなく、「移動そのもの」を楽しくすることを目指します。
 
-2. Start the app
+## 提供する価値
 
-   ```bash
-   npx expo start
-   ```
+- 移動時間そのものを、発見と体験の時間に変える
+- 「返却時刻まであと〇時間」といった制約の中で、無理なく楽しめる寄り道を提案する
+- 土地勘がない場所でも、安心して寄り道を選べる
+- 偶然の発見(セレンディピティ)を後押しする
+- 移動の記憶を思い出として残せるようにする
 
-In the output, you'll find options to open the app in a
+詳しいプロダクト定義は [docs/PRODUCT.md](./docs/PRODUCT.md) を参照してください。
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 主な機能
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+> 現時点ではアプリ機能は未実装です。以下は今後実装を予定している主な機能です。
 
-## Get a fresh project
+- 残り時間・返却時刻を起点にした寄り道ルートの提案
+- 景色の良い道・穴場スポットのレコメンド
+- 発見した場所・移動の記録(思い出化)
 
-When you're ready, run:
+## 技術構成
+
+- [Expo](https://expo.dev) (SDK 54)
+- React Native / TypeScript
+- [expo-router](https://docs.expo.dev/router/introduction/) によるファイルベースルーティング
+- 現時点では有料の外部API(地図・ルート検索・バックエンド・AI API等)は未使用です
+
+技術方針の詳細は [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) を参照してください。
+
+## 起動方法
 
 ```bash
-npm run reset-project
+# 依存関係のインストール
+npm install
+
+# 開発サーバーの起動
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+起動後、ターミナルの案内に従って以下のいずれかで開けます。
 
-## Learn more
+- [Development build](https://docs.expo.dev/develop/development-builds/introduction/)
+- Android エミュレータ
+- iOS シミュレータ
+- [Expo Go](https://expo.dev/go)
 
-To learn more about developing your project with Expo, look at the following resources:
+### 検証コマンド
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npm run lint          # ESLint によるコード検証
+npx tsc --noEmit      # TypeScript の型チェック
+```
 
-## Join the community
+## 現在の進捗
 
-Join our community of developers creating universal apps.
+現在は Expo の初期テンプレートの状態から、Claude Code / Codex / GitHub で安全に共同開発するためのドキュメント・ルール基盤を整備している段階です。アプリ画面・機能はまだ実装していません。
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+日々の詳細な進捗は [docs/PROGRESS.md](./docs/PROGRESS.md)、ユーザーに見える変更は [CHANGELOG.md](./CHANGELOG.md) に記録しています。
+
+## 今後の予定
+
+1. プロダクト要件に基づく画面・情報設計の検討
+2. 位置情報取得やルート表示などコア機能の技術検証(無料/モックデータの範囲で)
+3. 段階的な有料API(Google Routes / Google Places / Supabase / AI API 等)の導入検討
+
+## 既知の制限
+
+- アプリの画面・機能はまだ実装されていません(Expo初期テンプレートの状態)
+- 地図表示・ルート検索・位置情報取得などのコア機能は未実装です
+- 有料の外部API(Google Routes, Google Places, Supabase, AI API等)とは未連携です
+- ネイティブアプリのビルド設定(iOS/Android)はデフォルトのままです
+
+## 開発に参加するAIエージェント/開発者へ
+
+このリポジトリで作業する場合は、必ず [AGENTS.md](./AGENTS.md) の共通ルールに従ってください。Claude Codeで作業する場合は [CLAUDE.md](./CLAUDE.md) も参照してください。
