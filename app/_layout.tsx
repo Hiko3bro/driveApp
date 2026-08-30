@@ -3,21 +3,23 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
+import { DriveFlowProvider } from '@/contexts/drive-flow-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
+      <DriveFlowProvider>
+        <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="departure" options={{ title: '出発地点を選ぶ' }} />
+          <Stack.Screen name="conditions" options={{ title: 'ドライブ条件を入力' }} />
+          <Stack.Screen name="route-compare" options={{ title: 'ルートを比較する' }} />
+          <Stack.Screen name="route-summary" options={{ title: 'ルート決定' }} />
+        </Stack>
+      </DriveFlowProvider>
       <StatusBar style="auto" />
     </ThemeProvider>
   );

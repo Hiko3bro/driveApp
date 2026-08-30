@@ -38,6 +38,13 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "現在地から出発できるドライブルートを提案するために使用します。"
+        }
       ]
     ],
     "experiments": {
