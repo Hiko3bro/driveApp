@@ -13,7 +13,9 @@ export interface MapMarkerSpec {
   id: string;
   coordinate: Coordinates;
   title: string;
+  description?: string;
   color?: string;
+  onPress?: () => void;
 }
 
 export interface DriveMapViewHandle {
@@ -103,7 +105,9 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
               key={`${contentKey ?? 'marker'}-${marker.id}`}
               coordinate={marker.coordinate}
               title={marker.title}
+              description={marker.description}
               pinColor={marker.color}
+              onPress={marker.onPress}
             />
           ))}
           {safePolyline && safePolyline.length > 1 && (

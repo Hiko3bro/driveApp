@@ -21,6 +21,76 @@
 
 ---
 
+## 2026-08-31(3)
+
+`feature/spot-discovery` ブランチで、スポット探索を必須工程から任意工程へ変更した(commit・pushは未実施)。
+
+### 完了したこと
+
+- ルート決定確認画面(`app/route-summary.tsx`)に「このルートでナビ」ボタンを追加し、スポットを1件も追加せずに直接ルート確認画面(`app/route-plan.tsx`)へ進めるようにした。「周辺スポットを探す」(旧「このルート周辺のスポットを探す」)ボタンは既存どおり残し、2択で選べるようにした
+- `app/route-plan.tsx`を、spot-discoveryを経由していない(スポット0件の)状態でも表示・決定できるように変更
+  - `plan`算出・画面遷移ガードから「spot-discoveryを経由していること」「スポット1件以上」という必須条件を削除。座標検証・時間予算チェック(`isValidCoordinates`、`calculateSpotRoutePlan`)は変更していない
+  - スポットが0件の場合は「追加した経由地」欄を非表示にし、案内文言(「更新後」→「ルート情報」、経由地件数の表示)を出し分け
+  - スポットが0件の場合、「スポットを選び直す」ボタンを「周辺スポットを見る」(`/spot-discovery`へ)に出し分け(スポットがある場合は従来どおり`router.back()`)
+  - 決定/ナビ処理(`handleDecide`・決定後の完了画面)は新規実装せず、スポット0件〜3件の両方で同じコードパスをそのまま再利用した(Google Mapsへの実連携は現状未実装のため、完了画面の「次はGoogleマップでのナビ連携を実装予定です」という表示もそのまま維持)
+- `app/_layout.tsx`の`route-plan`画面タイトルを、直接ナビ・スポット追加後の両方に合う「ルート確認」に変更
+- `spot-discovery.tsx`・`route-compare.tsx`・現在地/自宅/指定場所まわりのコードは変更していない
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- 大きな変更にあたるため、実装前にCLAUDE.mdのルールに従い方針(画面タイトル名・スポット0件時のボタン文言)をユーザーに確認し、合意のうえで実装した
+
+### 未完了
+
+- 実機(Expo Go)での通し確認: ルート比較→ルート選択→「このルートでナビ」→決定→完了画面、および→「周辺スポットを探す」→スポット追加(0件・1件以上)→「この内容で決定」→完了画面の両経路
+- `route-plan`の地図表示は既知の問題(2026-08-31(2)参照)によりプレースホルダーのまま。Development Buildでの再確認は引き続き未着手
+- 記録・日記・共有機能、Google Mapsへの実ナビ連携は今回スコープ外で未着手
+
+### 次にやること
+
+- 実機(Expo Go)で上記2経路を再確認する
+- Development Buildを作成し、`route-plan`の地図クラッシュがExpo Go固有か再確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+
+---
+
+## 2026-08-31(2)
+
+`feature/spot-discovery` ブランチで、スポット追加後のルート確認画面(`app/route-plan.tsx`)がiPhone + Expo Goでクラッシュする問題を切り分け、地図表示を一時的に無効化して回避した(commit・pushは未実施)。
+
+### 完了したこと
+
+- iPhone + Expo Goで「スポットを経由地に追加」→「追加後のルートを確認」を押すとExpo Goごと終了する不具合を、`DriveMapView`(react-native-maps)を段階的にマウント/無効化しながら切り分けた
+  - `DriveMapView`を完全にマウントしない状態にするとクラッシュしないことを確認
+  - Marker・Polyline・fitToCoordinates・animateToRegion・カメラ操作・選択スポットのマーカーをすべて外し、固定の安全な`DEMO_MAP_REGION`だけを使ったMapView本体だけの最小構成に戻しても、`route-plan`へ遷移した瞬間にクラッシュが再現することを確認
+  - 前画面(`spot-discovery`)のMapViewが表示されたまま`route-plan`へ`push`することによる、画面遷移中の複数MapView同時マウントを疑い、`InteractionManager.runAfterInteractions()`によるMapViewの遅延マウントも試したが、クラッシュは解消しなかった
+  - 上記により、座標・Marker・Polyline・遷移タイミングではなく、**route-planでMapView(react-native-maps)をマウントすること自体がiOS(Expo Go)側のネイティブクラッシュ条件になっている**と判断した
+- 上記の切り分け結果を踏まえ、`app/route-plan.tsx`の地図表示を当面プレースホルダー(「地図表示は一時的に無効化しています」という案内文)に戻し、診断のために追加していたステージ切り替え・遅延マウント等の一時コードは整理して削除した
+  - ルート情報(距離・所要時間・時間予算内かどうか)、追加した経由地一覧、「この内容で決定」「スポットを選び直す」ボタン、画面遷移は従来どおり動作する
+  - ネイティブ地図へ渡す直前の座標検証(`isValidCoordinates`によるチェックとエラー表示)はそのまま維持した
+  - `react-native-maps`を使う他画面(`departure.tsx`, `route-compare.tsx`, `spot-discovery.tsx`)は変更していない
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- コード上、`spot-discovery → route-plan`だけが「地図を持つ画面から地図を持つ画面へpushする」唯一の遷移であることを確認(他の画面遷移は地図あり↔地図なしの組み合わせのみ)。`spot-discovery`側は`isFocusedRef`でフォーカス喪失後の`animateToRegion`呼び出しを既に抑止しており、カメラ操作の継続が原因ではないことをコードで確認済み
+
+### 未完了
+
+- **既知の問題**: `route-plan`でのMapView(react-native-maps)マウントによるiOS + Expo Goのネイティブクラッシュ。原因はExpo Go固有の制約(同時に複数のネイティブMapViewインスタンスが有効になることによるものなど)か、react-native-mapsと現在のExpo SDKの組み合わせ自体の問題かは未特定。**Development Buildを作成して再現するかどうかを確認する予定**
+- `route-plan`の地図表示(出発地点・経由スポットのマーカー、Polylineを含む本来の表示)は上記確認が取れるまでプレースホルダーのまま
+
+### 次にやること
+
+- Development Buildを作成し、`route-plan`でのMapViewマウントがExpo Go固有の問題か、Development Buildでも再現するかを確認する
+- Development Buildで問題が解消していれば、`route-plan`のプレースホルダーを元のDriveMapView表示(Marker・Polyline・選択スポット反映)へ戻す
+- Development Buildでも再現する場合は、react-native-mapsのバージョンやExpo SDKとの組み合わせ、複数MapView同時マウントの回避策(前画面のMapViewをアンマウントしてから遷移する等)を追加調査する
+
+---
+
 ## 2026-08-31
 
 iOSのExpo Go実機でコアルート探索フローを再確認し、現在のリリース・検証対象をiOSへ明確化した。

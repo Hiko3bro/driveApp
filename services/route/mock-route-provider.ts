@@ -3,8 +3,9 @@ import {
   type RouteProvider,
   type RouteSearchParams,
 } from '@/services/route/route-provider';
+import { resolveEffectiveTimeBudget } from '@/services/route/time-budget';
 import { isValidCoordinates, normalizeGeneratedCoordinates } from '@/services/location/coordinates';
-import type { AvailableTime, DetourLevel, Mood } from '@/types/drive';
+import type { DetourLevel, Mood } from '@/types/drive';
 import type { Coordinates } from '@/types/location';
 import type { RouteOption, RouteWaypoint } from '@/types/route';
 
@@ -50,13 +51,6 @@ function pathDistanceKm(path: Coordinates[]): number {
   }
   return total;
 }
-
-const AVAILABLE_TIME_MINUTES: Record<AvailableTime, number> = {
-  '1h': 60,
-  '2h': 120,
-  '3h': 180,
-  'half-day': 360,
-};
 
 const DETOUR_LEVEL_BUDGET_USAGE: Record<DetourLevel, number> = {
   few: 0.65,
@@ -140,40 +134,12 @@ const ROUTE_ARCHETYPES: RouteArchetype[] = [
   },
 ];
 
-function minutesUntilDeadline(deadline: string, now: Date): number {
-  const match = /^(\d{2}):(\d{2})$/.exec(deadline);
-  if (!match) {
-    throw new RoutePlanningError('帰着時刻を確認できませんでした。時刻を選び直してください。');
-  }
-
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) {
-    throw new RoutePlanningError('帰着時刻を確認できませんでした。時刻を選び直してください。');
-  }
-
-  const deadlineAt = new Date(now);
-  deadlineAt.setHours(hours, minutes, 0, 0);
-  return Math.floor((deadlineAt.getTime() - now.getTime()) / 60_000);
-}
-
 function effectiveTimeBudgetMinutes(params: RouteSearchParams, now = new Date()): number {
-  const availableMinutes = AVAILABLE_TIME_MINUTES[params.conditions.availableTime];
-  const deadline = params.conditions.returnDeadline;
-  if (!deadline) {
-    return availableMinutes;
+  const result = resolveEffectiveTimeBudget(params.conditions, now);
+  if (!result.ok) {
+    throw new RoutePlanningError(result.message);
   }
-
-  const deadlineMinutes = minutesUntilDeadline(deadline, now);
-  if (deadlineMinutes <= 0) {
-    throw new RoutePlanningError('選択した帰着時刻はすでに過ぎています。条件を変更してください。');
-  }
-
-  const effectiveMinutes = Math.min(availableMinutes, deadlineMinutes);
-  if (effectiveMinutes < MIN_ROUTE_BUDGET_MINUTES) {
-    throw new RoutePlanningError('帰着時刻までの時間が短すぎます。使える時間か帰着時刻を変更してください。');
-  }
-  return effectiveMinutes;
+  return result.minutes;
 }
 
 function createGeometry(

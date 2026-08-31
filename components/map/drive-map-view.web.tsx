@@ -7,7 +7,9 @@ export interface MapMarkerSpec {
   id: string;
   coordinate: Coordinates;
   title: string;
+  description?: string;
   color?: string;
+  onPress?: () => void;
 }
 
 export interface DriveMapViewHandle {
@@ -30,7 +32,7 @@ export interface DriveMapViewProps {
 
 /**
  * react-native-mapsはWeb未対応のため、Web版では地図の代わりに
- * プレースホルダーを表示する。地図・ルート比較の実確認はiOS/Androidで行う。
+ * プレースホルダーを表示する。地図・ルート比較の実確認はiOSで行う。
  */
 export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
   function DriveMapView({ markers = [], style, onMapReady }, ref) {
@@ -52,7 +54,7 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
       <View style={[styles.container, style]}>
         <Text style={styles.title}>地図はモバイル端末でご確認ください</Text>
         <Text style={styles.description}>
-          react-native-mapsはWeb未対応のため、Web版では地図を表示できません。iOS/Androidの実機またはシミュレータでご確認ください。
+          react-native-mapsはWeb未対応のため、Web版では地図を表示できません。正式な検証対象であるiOS実機でご確認ください。
         </Text>
         {markers.length > 0 && (
           <View style={styles.markerList}>

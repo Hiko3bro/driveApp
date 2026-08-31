@@ -1,5 +1,6 @@
+import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,6 +18,15 @@ function resolveRoute(routes: RouteOption[], selectedRouteId: string | null): Ro
 export default function RouteSummaryScreen() {
   const { departure, conditions, routes, selectedRouteId } = useDriveFlow();
   const route = resolveRoute(routes, selectedRouteId);
+  const navigationInFlightRef = useRef(false);
+  const [pendingAction, setPendingAction] = useState<'nav' | 'spots' | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      navigationInFlightRef.current = false;
+      setPendingAction(null);
+    }, [])
+  );
 
   useEffect(() => {
     if (!departure || !conditions || !route) {
@@ -27,6 +37,26 @@ export default function RouteSummaryScreen() {
   if (!departure || !conditions || !route) {
     return <SafeAreaView style={styles.safeArea} />;
   }
+
+  const handleStartNavigation = () => {
+    if (navigationInFlightRef.current) {
+      return;
+    }
+    navigationInFlightRef.current = true;
+    setPendingAction('nav');
+    // スポットを追加していないルート確認は、route-plan側でスポット0件として
+    // 扱われる(spot-discoveryと同じ決定/ナビ処理を再利用するため)。
+    router.push('/route-plan');
+  };
+
+  const handleExploreSpots = () => {
+    if (navigationInFlightRef.current) {
+      return;
+    }
+    navigationInFlightRef.current = true;
+    setPendingAction('spots');
+    router.push('/spot-discovery');
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -53,13 +83,29 @@ export default function RouteSummaryScreen() {
 
         <View style={styles.noticeBox}>
           <Text style={styles.noticeText}>
-            この先の寄り道スポットの詳細探索や記録機能は準備中です。今回はここまでのルート提案・比較の体験をお試しいただけます。
+            気になる場所があれば、周辺スポットから時間内に立ち寄れる経由地を最大3件まで追加できます(任意)。追加しなくても、このままナビを開始できます。
           </Text>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="ルート比較に戻る" variant="secondary" onPress={() => router.back()} />
+        <PrimaryButton
+          label={pendingAction === 'nav' ? 'ルートを準備しています…' : 'このルートでナビ'}
+          onPress={handleStartNavigation}
+          disabled={pendingAction !== null}
+        />
+        <PrimaryButton
+          label={pendingAction === 'spots' ? 'スポットを準備しています…' : '周辺スポットを探す'}
+          variant="secondary"
+          onPress={handleExploreSpots}
+          disabled={pendingAction !== null}
+        />
+        <PrimaryButton
+          label="ルート比較に戻る"
+          variant="secondary"
+          onPress={() => router.back()}
+          disabled={pendingAction !== null}
+        />
       </View>
     </SafeAreaView>
   );
@@ -141,5 +187,6 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     paddingTop: 8,
+    gap: 10,
   },
 });

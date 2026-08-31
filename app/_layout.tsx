@@ -18,6 +18,8 @@ export default function RootLayout() {
           <Stack.Screen name="conditions" options={{ title: 'ドライブ条件を入力' }} />
           <Stack.Screen name="route-compare" options={{ title: 'ルートを比較する' }} />
           <Stack.Screen name="route-summary" options={{ title: 'ルート決定' }} />
+          <Stack.Screen name="spot-discovery" options={{ title: '周辺スポットを探す' }} />
+          <Stack.Screen name="route-plan" options={{ title: 'ルート確認' }} />
         </Stack>
       </DriveFlowProvider>
       <StatusBar style="auto" />
