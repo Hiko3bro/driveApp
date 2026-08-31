@@ -4,6 +4,7 @@ const MIN_LATITUDE = -90;
 const MAX_LATITUDE = 90;
 const MIN_LONGITUDE = -180;
 const MAX_LONGITUDE = 180;
+const EARTH_RADIUS_KM = 6371;
 
 /** 実在の住所や目印を意図しない、地図初期表示専用の丸めたデモ地域。 */
 export const DEMO_MAP_REGION: MapRegion = {
@@ -59,6 +60,18 @@ export function normalizeLongitude(longitude: number): number | null {
 
   const normalized = ((((longitude - MIN_LONGITUDE) % 360) + 360) % 360) + MIN_LONGITUDE;
   return Object.is(normalized, -0) ? 0 : normalized;
+}
+
+/** 2点間の直線距離(km)を球面近似で計算する。走行距離の集計など数値計算専用で、地図表示には使わない。 */
+export function haversineDistanceKm(a: Coordinates, b: Coordinates): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 /** 計算で生成した座標をネイティブ地図が扱える範囲へ収める。 */

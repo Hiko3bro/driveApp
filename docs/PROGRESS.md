@@ -21,6 +21,47 @@
 
 ---
 
+## 2026-08-31(4)
+
+`feature/drive-recording` ブランチで、ルート決定後のドライブ記録プロトタイプ(ドライブ開始→走行記録→終了→記録結果確認)を実装した(commit・pushは未実施)。
+
+### 完了したこと
+
+- `app/route-plan.tsx` の決定完了画面に「ドライブを開始」ボタンを追加し、ドライブ記録画面(`app/drive-recording.tsx`)へ進めるようにした(スポットあり・なしどちらの完了画面からも遷移可能)
+- ドライブ記録画面(`app/drive-recording.tsx`)を新規作成。経過時間・走行距離・現在地(緯度経度)・記録状態(記録前/記録中/記録終了)を表示し、「記録を開始」「ドライブを終了」で記録の開始・終了を操作できる
+  - 既知の問題(`route-plan`でのMapViewマウントによるiOS Expo Goクラッシュ、2026-08-31(2)参照)を踏まえ、この画面ではMapViewを一切マウントせず、現在地はテキスト表示にとどめた(`docs/DECISIONS.md`に記録)
+- 記録ロジック本体を`hooks/use-drive-recording.ts`に実装
+  - 記録開始時に`requestCurrentLocation()`(既存の現在地取得処理を再利用)で許可・取得を試み、成功すれば実GPSモード、失敗(拒否/エラー)すればデモ走行モードへ自動フォールバックする
+  - 実GPSモードは5秒間隔で`requestCurrentLocation()`を呼び直して座標を記録。デモ走行モードは`services/location/drive-demo-simulator.ts`が選択中ルートの`route.path`に沿って前後に往復する座標を同じ5秒間隔で生成する
+  - 記録した座標配列から`services/location/coordinates.ts`に追加した`haversineDistanceKm`で走行距離を積算。経過時間は開始時刻との差分から算出し、画面のタイマー表示とずれないようにした
+  - 記録開始・終了の二重実行を防止するガード(`isStartingRef`)を追加
+- 記録結果確認画面(`app/drive-summary.tsx`)を新規作成。走行時間・走行距離・記録した座標数・選択したルート・経由したスポットを表示し、次フェーズの日記作成機能で使う想定のデータであることを案内する。「ホームに戻る」でホーム画面へ戻れる
+- `contexts/drive-flow-context.tsx`に`driveRecord`(記録結果のスナップショット1件、`route`・`spots`・`track`・距離・時間・記録元を含む)と`setDriveRecord`を追加。既存のdeparture/conditions/routes/spots等と同じくアプリ内状態(React Context)のみで保持し、永続化(AsyncStorage・Supabase等)は行っていない
+- `types/drive-recording.ts`を新規作成し、記録データの型(`RecordedTrackPoint`・`DriveRecordingResult`)を定義。将来の共有機能(GPSルート線を写真に重ねて共有)に向けて、記録データ(生の座標配列)を表示・共有用データと結合しない方針で設計した(`docs/DECISIONS.md`に記録)
+- `app/_layout.tsx`に`drive-recording`(戻るボタン非表示)・`drive-summary`の2画面を追加
+- 依存パッケージの追加は行っていない(`expo-location`は導入済みのものを再利用)
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし(`app/drive-recording.tsx`・`app/drive-summary.tsx`追加にともない、`npx expo start --web`を一度実行してexpo-routerのtyped routes型定義を再生成する必要があった)
+- `npm run lint`: エラー・警告なし
+- `npx expo start --web`: Metroが起動し、Web向けバンドル(entry.js / render.js)がエラーなく完了することを確認(地図を使わない画面のため、Web版でも表示ロジック自体は確認できるが、実機での操作確認は別途必要)
+- 既存の出発地点選択・ドライブ条件入力・ルート比較・ルート決定確認・スポット探索・ルート確認(`route-plan`)の画面・ロジックは変更していないことをdiffで確認(`route-plan.tsx`は完了画面へのボタン追加のみ)
+
+### 未完了
+
+- 実機(iOS Expo Go)での通し確認: 「ドライブを開始」→記録開始(許可時の実GPSモード、拒否時のデモ走行モードの両方)→「ドライブを終了」→記録結果確認、の一連の操作
+- 記録中に画面を離れる(戻る操作・アプリ切り替え等)場合の挙動の実機確認(タイマー・GPS購読は画面アンマウント時に停止する実装だが、実機での見え方は未確認)
+- ドライブ記録データのローカル永続化(アプリ再起動後も残す)、クラウド同期、日記作成・写真選択・共有画像生成・SNS共有は今回スコープ外で未着手
+
+### 次にやること
+
+- 実機(Expo Go)で上記の一連の操作を確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+- 次フェーズ(日記作成)の要件整理に着手する
+
+---
+
 ## 2026-08-31(3)
 
 `feature/spot-discovery` ブランチで、スポット探索を必須工程から任意工程へ変更した(commit・pushは未実施)。

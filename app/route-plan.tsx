@@ -183,6 +183,11 @@ export default function RoutePlanScreen() {
             実在スポットへ接続した将来版では、評価・口コミをアプリ内で模倣せず、Googleマップで確認できる導線を提供します。
           </Text>
           <PrimaryButton
+            label="ドライブを開始"
+            onPress={() => router.push('/drive-recording')}
+            style={styles.fullWidth}
+          />
+          <PrimaryButton
             label={secondarySpotLabel}
             variant="secondary"
             onPress={handleSecondarySpotAction}

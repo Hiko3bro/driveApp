@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 
 import { isValidCoordinates } from '@/services/location/coordinates';
 import type { DriveConditions } from '@/types/drive';
+import type { DriveRecordingResult } from '@/types/drive-recording';
 import type { DepartureSelection } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 import { MAX_SELECTED_SPOTS, type Spot } from '@/types/spot';
@@ -15,6 +16,8 @@ interface DriveFlowState {
   spots: Spot[];
   selectedSpotId: string | null;
   selectedSpotIds: string[];
+  /** 直近のドライブ記録結果。次の日記作成機能等から利用する、記録終了時点のスナップショット。 */
+  driveRecord: DriveRecordingResult | null;
 }
 
 interface DriveFlowContextValue extends DriveFlowState {
@@ -25,6 +28,7 @@ interface DriveFlowContextValue extends DriveFlowState {
   initializeSpotDiscovery: (routeId: string, spots: Spot[]) => void;
   setSelectedSpotId: (routeId: string, spotId: string) => void;
   setSelectedSpotIds: (routeId: string, spotIds: string[]) => void;
+  setDriveRecord: (record: DriveRecordingResult) => void;
   reset: () => void;
 }
 
@@ -41,6 +45,7 @@ const initialState: DriveFlowState = {
   routes: [],
   selectedRouteId: null,
   ...emptySpotState,
+  driveRecord: null,
 };
 
 const DriveFlowContext = createContext<DriveFlowContextValue | null>(null);
@@ -148,6 +153,10 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setDriveRecord = useCallback((record: DriveRecordingResult) => {
+    setState((prev) => ({ ...prev, driveRecord: record }));
+  }, []);
+
   const reset = useCallback(() => {
     setState(initialState);
   }, []);
@@ -162,6 +171,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       initializeSpotDiscovery,
       setSelectedSpotId,
       setSelectedSpotIds,
+      setDriveRecord,
       reset,
     }),
     [
@@ -173,6 +183,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       initializeSpotDiscovery,
       setSelectedSpotId,
       setSelectedSpotIds,
+      setDriveRecord,
       reset,
     ]
   );

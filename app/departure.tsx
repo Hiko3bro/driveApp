@@ -20,7 +20,7 @@ function regionFromCoordinates(coordinates: Coordinates): MapRegion {
 type Mode = 'menu' | 'locating' | 'location-denied' | 'home-register' | 'custom-pick';
 
 export default function DepartureScreen() {
-  const { setDeparture } = useDriveFlow();
+  const { departure, setDeparture } = useDriveFlow();
 
   const [mode, setMode] = useState<Mode>('menu');
   const [homeChecked, setHomeChecked] = useState(false);
@@ -162,8 +162,39 @@ export default function DepartureScreen() {
   }, [homeLocation, openPicker]);
 
   const handleStartCustomPick = useCallback(() => {
-    openPicker('custom-pick', lastKnownLocation ?? DEMO_MAP_REGION);
-  }, [lastKnownLocation, openPicker]);
+    // 1. すでに指定した場所が選択済みなら、その地点を初期中心にする。
+    if (departure?.source === 'custom' && isValidCoordinates(departure.coordinates)) {
+      openPicker('custom-pick', departure.coordinates);
+      return;
+    }
+    // 2. 指定地点はないが、現在地を取得済み(このセッション内でキャッシュ済み)ならそれを使う。
+    if (lastKnownLocation) {
+      openPicker('custom-pick', lastKnownLocation);
+      return;
+    }
+
+    // 3. どちらもない場合のみ、初期中心を決めるために現在地取得を1回だけ試みる。
+    // 取得できてもできなくても指定場所選択自体は継続できるよう、失敗時は
+    // location-deniedへは遷移させず、安全なデフォルトregionへフォールバックする。
+    const requestId = locationRequestIdRef.current + 1;
+    locationRequestIdRef.current = requestId;
+    setMode('locating');
+
+    void requestCurrentLocation().then((result) => {
+      const requestIsActive =
+        isMountedRef.current && isFocusedRef.current && locationRequestIdRef.current === requestId;
+      if (!requestIsActive) {
+        return;
+      }
+
+      if (result.status === 'granted' && isValidCoordinates(result.coordinates)) {
+        setLastKnownLocation(result.coordinates);
+        openPicker('custom-pick', result.coordinates);
+      } else {
+        openPicker('custom-pick', DEMO_MAP_REGION);
+      }
+    });
+  }, [departure, lastKnownLocation, openPicker]);
 
   const handleCancelPicker = useCallback(() => {
     if (pickerConfirmationInFlightRef.current) {

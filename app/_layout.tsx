@@ -20,6 +20,8 @@ export default function RootLayout() {
           <Stack.Screen name="route-summary" options={{ title: 'ルート決定' }} />
           <Stack.Screen name="spot-discovery" options={{ title: '周辺スポットを探す' }} />
           <Stack.Screen name="route-plan" options={{ title: 'ルート確認' }} />
+          <Stack.Screen name="drive-recording" options={{ title: 'ドライブ記録', headerBackVisible: false }} />
+          <Stack.Screen name="drive-summary" options={{ title: '記録結果確認' }} />
         </Stack>
       </DriveFlowProvider>
       <StatusBar style="auto" />
