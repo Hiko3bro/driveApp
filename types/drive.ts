@@ -32,7 +32,7 @@ export const AVAILABLE_TIME_LABELS: Record<AvailableTime, string> = {
   '2h': '2時間くらい',
   '3h': '3時間くらい',
   'half-day': '半日',
-  custom: '時間を指定',
+  custom: '自分で入力',
 };
 
 export const MOOD_LABELS: Record<Mood, string> = {
@@ -82,7 +82,7 @@ export function summarizeDriveConditions(conditions: DriveConditions): string {
   const parts = conditions.moods.map((mood) => MOOD_LABELS[mood]);
   parts.push(formatAvailableTimeLabel(conditions));
   if (conditions.returnDeadline) {
-    parts.push(`${conditions.returnDeadline}までに戻る`);
+    parts.push(`${conditions.returnDeadline}まで`);
   }
   return parts.join('・');
 }

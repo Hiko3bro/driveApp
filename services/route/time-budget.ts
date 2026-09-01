@@ -25,7 +25,14 @@ export type TimeBudgetResult =
   | { ok: true; minutes: number }
   | { ok: false; message: string };
 
-function minutesUntilDeadline(deadline: string, now: Date): number | null {
+/**
+ * 「次に訪れるその時刻」のDateを作る。今日の日付にHH:mmを設定し、それが現在日時以下
+ * (=すでにその時刻を過ぎている)なら翌日の同時刻とみなす。これにより、日付をまたぐ
+ * 帰着時刻(例: 現在23:10に対する00:30)を「今日の過ぎた時刻」ではなく「翌日の時刻」
+ * として正しく扱える。resolveEffectiveTimeBudgetでの実際のチェックと、条件入力画面
+ * での表示とで、この関数だけを共通の判定基準として使う。
+ */
+function resolveNextDeadline(deadline: string, now: Date): Date | null {
   const match = /^(\d{2}):(\d{2})$/.exec(deadline);
   if (!match) {
     return null;
@@ -39,10 +46,21 @@ function minutesUntilDeadline(deadline: string, now: Date): number | null {
 
   const deadlineAt = new Date(now);
   deadlineAt.setHours(hours, minutes, 0, 0);
+  if (deadlineAt.getTime() <= now.getTime()) {
+    deadlineAt.setDate(deadlineAt.getDate() + 1);
+  }
+  return deadlineAt;
+}
+
+function minutesUntilDeadline(deadline: string, now: Date): number | null {
+  const deadlineAt = resolveNextDeadline(deadline, now);
+  if (!deadlineAt) {
+    return null;
+  }
   return Math.floor((deadlineAt.getTime() - now.getTime()) / 60_000);
 }
 
-/** 使える時間と当日の帰着期限のうち短い方を、有効な時間予算として返す。 */
+/** 使える時間と、次に訪れる帰着時刻までの時間のうち短い方を、有効な時間予算として返す。 */
 export function resolveEffectiveTimeBudget(
   conditions: DriveConditions,
   now = new Date()
@@ -56,9 +74,6 @@ export function resolveEffectiveTimeBudget(
   const deadlineMinutes = minutesUntilDeadline(deadline, now);
   if (deadlineMinutes === null) {
     return { ok: false, message: '帰着時刻を確認できませんでした。時刻を選び直してください。' };
-  }
-  if (deadlineMinutes <= 0) {
-    return { ok: false, message: '選択した帰着時刻はすでに過ぎています。条件を変更してください。' };
   }
 
   const effectiveMinutes = Math.min(availableMinutes, deadlineMinutes);

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OptionChip } from '@/components/ui/option-chip';
@@ -12,7 +12,6 @@ import {
   MAX_SELECTED_MOODS,
   MOOD_LABELS,
   RETURN_TARGET_LABELS,
-  formatMinutesLabel,
   type AvailableTime,
   type DetourLevel,
   type DriveConditions,
@@ -23,8 +22,15 @@ import {
 const AVAILABLE_TIME_OPTIONS = Object.keys(AVAILABLE_TIME_LABELS) as AvailableTime[];
 const MOOD_OPTIONS = Object.keys(MOOD_LABELS) as Mood[];
 const RETURN_TARGET_OPTIONS = Object.keys(RETURN_TARGET_LABELS) as ReturnTarget[];
-const RETURN_DEADLINE_OPTIONS = ['指定なし', '17:00', '18:00', '19:00', '20:00', '21:00'];
-const CUSTOM_MINUTE_OPTIONS = [30, 45, 90, 150, 240, 300];
+
+type ReturnDeadlineMode = 'none' | 'custom';
+
+/** 「自分で入力」で指定できる時間の上限(時間)。半日を大きく超えない範囲に収める。 */
+const MAX_CUSTOM_HOURS = 12;
+const MAX_MINUTE_PART = 59;
+/** 0分・負数など不正な入力を安全な範囲へ収めるための下限・上限(分)。 */
+const MIN_CUSTOM_TOTAL_MINUTES = 10;
+const MAX_CUSTOM_TOTAL_MINUTES = MAX_CUSTOM_HOURS * 60;
 
 /** 「今日の気分」から、既存の寄り道量ロジック(DetourLevel)へ変換する。 */
 function deriveDetourLevel(moods: Mood[]): DetourLevel {
@@ -37,15 +43,36 @@ function deriveDetourLevel(moods: Mood[]): DetourLevel {
   return 'normal';
 }
 
+/** 数字以外の文字を取り除く。 */
+function sanitizeDigits(text: string): string {
+  return text.replace(/[^0-9]/g, '');
+}
+
+/** テキスト入力を整数へ変換し、[min, max]の範囲へ安全に収める。空文字や非数値はminとして扱う。 */
+function clampInt(text: string, min: number, max: number): number {
+  const parsed = Number.parseInt(sanitizeDigits(text), 10);
+  if (!Number.isFinite(parsed)) {
+    return min;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, '0');
+}
+
 export default function ConditionsScreen() {
   const { departure, setConditions, setRoutes } = useDriveFlow();
 
   const [moods, setMoods] = useState<Mood[]>([]);
   const [moodNotice, setMoodNotice] = useState<string | null>(null);
   const [availableTime, setAvailableTime] = useState<AvailableTime>('2h');
-  const [customMinutes, setCustomMinutes] = useState<number>(90);
+  const [customHoursText, setCustomHoursText] = useState('2');
+  const [customMinutesText, setCustomMinutesText] = useState('0');
   const [returnTarget, setReturnTarget] = useState<ReturnTarget>('same-as-departure');
-  const [returnDeadline, setReturnDeadline] = useState<string>('指定なし');
+  const [returnDeadlineMode, setReturnDeadlineMode] = useState<ReturnDeadlineMode>('none');
+  const [returnHourText, setReturnHourText] = useState('18');
+  const [returnMinuteText, setReturnMinuteText] = useState('0');
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
 
@@ -79,12 +106,24 @@ export default function ConditionsScreen() {
   };
 
   const handleSubmit = async () => {
+    // 入力途中の文字列(空・桁あふれ等)も、ここで必ず安全な整数へ丸めてから使う。
+    const customHours = clampInt(customHoursText, 0, MAX_CUSTOM_HOURS);
+    const customMinutesPart = clampInt(customMinutesText, 0, MAX_MINUTE_PART);
+    const customAvailableMinutes = Math.min(
+      Math.max(customHours * 60 + customMinutesPart, MIN_CUSTOM_TOTAL_MINUTES),
+      MAX_CUSTOM_TOTAL_MINUTES
+    );
+
+    const returnHour = clampInt(returnHourText, 0, 23);
+    const returnMinute = clampInt(returnMinuteText, 0, 59);
+
     const conditions: DriveConditions = {
       availableTime,
-      customAvailableMinutes: availableTime === 'custom' ? customMinutes : undefined,
+      customAvailableMinutes: availableTime === 'custom' ? customAvailableMinutes : undefined,
       moods,
       returnTarget,
-      returnDeadline: returnDeadline === '指定なし' ? undefined : returnDeadline,
+      returnDeadline:
+        returnDeadlineMode === 'custom' ? `${pad2(returnHour)}:${pad2(returnMinute)}` : undefined,
       detourLevel: deriveDetourLevel(moods),
     };
 
@@ -144,16 +183,38 @@ export default function ConditionsScreen() {
             ))}
           </ChipRow>
           {availableTime === 'custom' && (
-            <ChipRow>
-              {CUSTOM_MINUTE_OPTIONS.map((minutes) => (
-                <OptionChip
-                  key={minutes}
-                  label={formatMinutesLabel(minutes)}
-                  selected={customMinutes === minutes}
-                  onPress={() => setCustomMinutes(minutes)}
+            <View style={styles.timeInputRow}>
+              <View style={styles.timeInputField}>
+                <TextInput
+                  style={styles.timeInputBox}
+                  value={customHoursText}
+                  onChangeText={(text) => setCustomHoursText(sanitizeDigits(text).slice(0, 2))}
+                  onBlur={() =>
+                    setCustomHoursText(String(clampInt(customHoursText, 0, MAX_CUSTOM_HOURS)))
+                  }
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="2"
+                  placeholderTextColor="#9aa5ab"
                 />
-              ))}
-            </ChipRow>
+                <Text style={styles.timeInputUnit}>時間</Text>
+              </View>
+              <View style={styles.timeInputField}>
+                <TextInput
+                  style={styles.timeInputBox}
+                  value={customMinutesText}
+                  onChangeText={(text) => setCustomMinutesText(sanitizeDigits(text).slice(0, 2))}
+                  onBlur={() =>
+                    setCustomMinutesText(String(clampInt(customMinutesText, 0, MAX_MINUTE_PART)))
+                  }
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="30"
+                  placeholderTextColor="#9aa5ab"
+                />
+                <Text style={styles.timeInputUnit}>分</Text>
+              </View>
+            </View>
           )}
         </Section>
 
@@ -172,15 +233,47 @@ export default function ConditionsScreen() {
 
         <Section title="何時ごろ戻る?">
           <ChipRow>
-            {RETURN_DEADLINE_OPTIONS.map((value) => (
-              <OptionChip
-                key={value}
-                label={value}
-                selected={returnDeadline === value}
-                onPress={() => setReturnDeadline(value)}
-              />
-            ))}
+            <OptionChip
+              label="指定なし"
+              selected={returnDeadlineMode === 'none'}
+              onPress={() => setReturnDeadlineMode('none')}
+            />
+            <OptionChip
+              label="時刻を指定"
+              selected={returnDeadlineMode === 'custom'}
+              onPress={() => setReturnDeadlineMode('custom')}
+            />
           </ChipRow>
+          {returnDeadlineMode === 'custom' && (
+            <View style={styles.timeInputRow}>
+              <View style={styles.timeInputField}>
+                <TextInput
+                  style={styles.timeInputBox}
+                  value={returnHourText}
+                  onChangeText={(text) => setReturnHourText(sanitizeDigits(text).slice(0, 2))}
+                  onBlur={() => setReturnHourText(String(clampInt(returnHourText, 0, 23)))}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="18"
+                  placeholderTextColor="#9aa5ab"
+                />
+                <Text style={styles.timeInputUnit}>時</Text>
+              </View>
+              <View style={styles.timeInputField}>
+                <TextInput
+                  style={styles.timeInputBox}
+                  value={returnMinuteText}
+                  onChangeText={(text) => setReturnMinuteText(sanitizeDigits(text).slice(0, 2))}
+                  onBlur={() => setReturnMinuteText(String(clampInt(returnMinuteText, 0, 59)))}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="30"
+                  placeholderTextColor="#9aa5ab"
+                />
+                <Text style={styles.timeInputUnit}>分</Text>
+              </View>
+            </View>
+          )}
         </Section>
 
         {submissionError && <Text style={styles.errorText}>{submissionError}</Text>}
@@ -260,6 +353,34 @@ const styles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+  },
+  timeInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 4,
+  },
+  timeInputField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  timeInputBox: {
+    width: 56,
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d7dee0',
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    fontSize: 16,
+    color: '#11181C',
+    textAlign: 'center',
+  },
+  timeInputUnit: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334',
   },
   submitButton: {
     marginTop: 12,

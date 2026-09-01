@@ -37,30 +37,57 @@
 - `app/conditions.tsx`を全面的に作り替え
   - 画面上部に「今日はどんなドライブにする?」の見出しを追加
   - 「今日の気分」(旧「気分」)をチップの複数選択(最大3件、任意)にし、上限に達した場合は案内メッセージを表示する
-  - 「使える時間」→「どれくらい走る?」に改称し、「時間を指定」を選ぶと30分〜5時間の候補チップが追加で表示される
-  - 「帰着地点」→「戻り方」、「帰着時刻(目安)」→「何時ごろ戻る?」に改称(選択肢自体は変更していない)
+  - 「使える時間」→「どれくらい走る?」に改称(時間指定の中身は後述の修正で数字入力欄へ変更)
+  - 「帰着地点」→「戻り方」、「帰着時刻(目安)」→「何時ごろ戻る?」に改称(帰着時刻の選び方は後述の修正で数字入力欄へ変更)
   - 「寄り道」の専用チップ行を削除し、送信時に`moods`から`DetourLevel`を導出する(「寄り道多め」→多め、「短時間」→少なめ、それ以外→普通)
   - 送信ボタンを「ルートを提案してもらう」→「今日のルートを見つける」に変更
 - `app/route-compare.tsx`・`app/route-summary.tsx`: 画面上部に`summarizeDriveConditions()`による選んだ条件の要約表示を追加。ルートカードに`route.audience`(どんな人向けか)の表示を追加
 - 既存のルート比較・スポット探索・ドライブ記録・日記・共有機能のロジックは変更していない(`route-compare.tsx`・`route-summary.tsx`は表示追加のみ)
+- **実機確認前のフィードバックを受けて、時間まわりのUIをさらに自由度の高い形へ修正(1回目: 数字入力欄化)**
+  - パッケージ追加の事前確認: 「時刻を指定」にネイティブのTimePicker(`@react-native-community/datetimepicker`等)を使う案と、既存コンポーネントのみで数字入力欄を作る案をユーザーへ提示し、既存コンポーネントのみで実装する方を選んだ(理由は`docs/DECISIONS.md`に記録)
+  - 「どれくらい走る?」の「時間を指定」候補チップ(30分刻み)を廃止し、「自分で入力」に改称。選ぶと「時間」「分」の数字入力欄(`TextInput`、`keyboardType="number-pad"`)が表示され、任意の時間(例: 2時間30分)を指定できるようにした
+  - 「何時ごろ戻る?」の固定候補チップ(17:00〜21:00)を廃止し、「指定なし」/「時刻を指定」の2択にした。「時刻を指定」を選ぶと「時」「分」の数字入力欄が表示され、任意の時刻(例: 18:30)を指定できる。保存形式は既存どおり`"HH:mm"`を維持
+  - 入力値は`sanitizeDigits`(数字以外を除去)→`clampInt`(範囲へクランプ)の2段階で処理。「時間」0〜12・「分」0〜59・使える時間の合計10分〜12時間・帰着時刻の「時」0〜23・「分」0〜59へ必ず収め、`onBlur`と送信時の両方でクランプすることで、空欄・0・負数相当・桁あふれのいずれでも安全に扱えるようにした
+  - `types/drive.ts`の`summarizeDriveConditions()`の帰着時刻表記を「`◯◯までに戻る`」から「`◯◯まで`」に短縮し、要件例の「2時間30分・18:30まで」に近づけた
+  - `AVAILABLE_TIME_LABELS.custom`のラベルを「時間を指定」→「自分で入力」に変更。使わなくなった候補チップ用の定数(`CUSTOM_MINUTE_OPTIONS`・`RETURN_DEADLINE_OPTIONS`)・`conditions.tsx`内で使われなくなった`formatMinutesLabel`のimportは削除した
+- **さらなるフィードバックを受けて、iPhoneではホイール型のTimePickerを使う形へ変更(2回目: ネイティブピッカー化)** → 後述のとおり、実機確認でうまく動作しなかったため3回目で取りやめた
+  - `npx expo install @react-native-community/datetimepicker`を追加(バージョン8.4.4は`node_modules/expo/bundledNativeModules.json`記載のExpo Go SDK 54標準搭載バージョンと一致することを確認し、Development Build不要でExpo Goのまま使えると判断)。`npx expo install`により`app.json`の`plugins`へ自動追加された
+  - 「何時ごろ戻る?」の「時刻を指定」を、`mode="time"` `display="spinner"` `is24Hour`のホイール型ピッカーに置き換えた(iOS・Android共通、旧「時」「分」の数字入力欄は削除)
+  - 「どれくらい走る?」の「自分で入力」は、日時ではなく所要時間を扱うため`mode="time"`をそのまま使わず、iOSのみ`mode="countdown"`(Appleの「タイマー」アプリと同じ、時間・分のみのホイール)を使用。Androidでは`countdown`が未対応のため、1回目の修正で作った「時間」「分」の数字入力欄をフォールバックとして残し、`Platform.OS === 'ios'`で出し分けた
+  - `minutesToDurationDate()`/`durationDateToMinutes()`を追加し、countdownピッカーのDate値↔分数を相互変換。ピッカーの値は必ず既存の`clampMinutes()`(10分〜720分)を通してから`customAvailableMinutes`へ入れるため、ピッカー自体が選べる範囲(最大23時間59分)がアプリの実用上限を超えても安全に収まる
+  - `returnDeadline`(`"HH:mm"`)・`customAvailableMinutes`(分単位)というデータ形状、`services/route/time-budget.ts`・`services/route/mock-route-provider.ts`のロジックは1回目の修正時から変更していない
+- **実機確認でTimePicker方式がうまく動作しなかったため、導入を取りやめて1回目の数字入力欄方式へ差し戻し(3回目: TimePicker撤去)**
+  - `npm uninstall @react-native-community/datetimepicker`でパッケージを削除。`package.json`・`package-lock.json`から該当エントリが消え、`node_modules/@react-native-community/datetimepicker`も削除されたことを確認した。`npm uninstall`実行時に`package.json`の`devDependencies`の順序が変わる副作用があったため、元の順序に戻した
+  - `app.json`の`plugins`から`npx expo install`時に自動追加されていた`"@react-native-community/datetimepicker"`エントリを削除
+  - `app/conditions.tsx`から`DateTimePicker`のimport・`Platform`分岐・countdownピッカー用の`customDurationDate`state・`minutesToDurationDate()`/`durationDateToMinutes()`/`clampMinutes()`・`wheelPickerBox`スタイルを削除し、2回目の直前(1回目の完了時点)の「時間」「分」・「時」「分」の数字入力欄(`TextInput`)のみの実装へ全面的に戻した
+  - `customAvailableMinutes`(分単位)・`returnDeadline`(`"HH:mm"`)というデータ構造、`sanitizeDigits`/`clampInt`によるバリデーション、`types/drive.ts`・`services/route/time-budget.ts`・`services/route/mock-route-provider.ts`・`route-compare.tsx`・`route-summary.tsx`(条件要約・3ルートの作り分け等、TimePicker導入前後で変更していない部分)は変更していない
+  - `git diff app.json package.json package-lock.json`が完全に空(コミット済み内容と一致)になることを確認し、依存関係が導入前の状態に戻っていることを確認した
+- **実機確認で「帰着時刻はすでに過ぎています」という警告が消えない不具合が見つかり、原因調査のうえ修正(4回目: 帰着時刻のライブ判定追加→日付またぎ対応への修正)**
+  - 1回目の調査: `submissionError`が`handleSubmit`内でのみ設定・クリアされ、時刻入力を変更しても再評価されないことが原因と判明。`services/route/time-budget.ts`に`isReturnDeadlineInPast()`を追加し、`app/conditions.tsx`に送信前のライブ判定・警告表示を追加する形で一度修正した(この時点ではまだ同日限定の判定のまま)
+  - 実機での追加確認で、未来時刻や翌日の時刻(例: 現在23時台に対して00:30〜02:00)を指定しても正しく判定されないと分かり、根本原因は`minutesUntilDeadline`が常に「今日の日付」にHH:mmを当てはめて比較しており、日付をまたぐケースを考慮していなかったことだと判明(詳細は`docs/DECISIONS.md`の該当エントリに記録)
+  - `time-budget.ts`に`resolveNextDeadline(deadline, now)`を新設し、「今日の日付に当てはめた日時が現在日時以下なら翌日とみなす」ロールオーバー処理を追加。`minutesUntilDeadline`はこれを使うよう書き換え、常に0より大きい値を返すようになったため、`resolveEffectiveTimeBudget`の「すでに過ぎている」分岐を削除した
+  - 1回目の修正で追加した`isReturnDeadlineInPast()`・条件入力画面側のライブ警告表示は、同日限定という同じ欠陥を持つ重複した判定だったため削除し、判定ロジックを`time-budget.ts`側の1箇所へ統一した
+  - 「どれくらい走る?」(`customAvailableMinutes`・時間予算計算)には一切手を加えていない
 
 ### 確認したこと
 
 - `npx tsc --noEmit`: エラーなし
 - `npm run lint`: エラー・警告なし
-- `npx expo start --web`: Metroが起動し、Web向けバンドルがエラーなく完了することを確認(共有画面由来の`shadow*`非推奨警告のみで、今回の変更によるエラー・警告はなし)
+- `node_modules`・`package.json`・`package-lock.json`・`app.json`に`datetimepicker`関連の記述が一切残っていないことをgrepで確認
 - `conditions.mood`(旧フィールド)を参照している箇所が`app/conditions.tsx`・`services/route/mock-route-provider.ts`以外にないことをコードレビュー・grepで確認済み。`services/spot/spot-route-plan.ts`は`DriveConditions`を丸ごと`resolveEffectiveTimeBudget`へ渡すだけで、`mood`・`detourLevel`を直接参照していないため、今回の変更の影響を受けないことを確認した
 - 既存のルート探索・スポット探索・ドライブ記録・日記・共有機能の画面・ロジックは変更していないことをdiffで確認
+- 数字入力欄(`clampInt`)が空文字・"0"・"99"・負の符号を含む文字列のいずれでも例外を投げず、指定した範囲内の整数を返すことをコードレビューで確認
+- 帰着時刻の判定(`resolveNextDeadline`/`minutesUntilDeadline`)を`services/route/time-budget.ts`の1箇所にまとめ、`app/conditions.tsx`・`resolveEffectiveTimeBudget`の両方から見て重複した判定が存在しないことをgrepで確認(`returnDeadline`関連のロジックが`time-budget.ts`以外に存在しないことを確認)
+- 実機(iOS Expo Go)で、「今日の気分」の複数選択(上限・解除)、「自分で入力」「時刻を指定」の数字入力(境界値・極端な値を含む)、時間指定・帰着時刻・帰着時刻の日付またぎ判定(帰着23:50→当日、00:30/01:00/02:00→翌日として正常、指定なし→制限なし)、条件に応じた3ルートの違い、ルート比較・ルート決定確認画面での条件要約表示を、ユーザーによる実機確認で問題なしと確認
 
 ### 未完了
 
-- 実機(iOS Expo Go)での通し確認: 「今日の気分」の複数選択(上限・解除)、「時間を指定」の候補チップ、条件に応じた3ルートの違い(距離・時間・タグ・audience)、ルート比較・ルート決定確認画面での条件要約表示
-- Google Routes API/Google Places API等の実データ接続、実交通情報・天気APIとの連携、複雑な日時計算(日付をまたぐ帰着時刻等)は今回スコープ外で未着手
+- TimePicker方式が具体的にどう動作しなかったか(症状・原因)の切り分けは行っていない。将来ネイティブピッカーを再検討する際は、原因調査から改めて行う必要がある
+- Google Routes API/Google Places API等の実データ接続、実交通情報・天気APIとの連携、2日以上先の日付をまたぐ帰着時刻の指定(日付選択UI等)は今回スコープ外で未着手
 
 ### 次にやること
 
-- 実機(Expo Go)で上記の一連の操作を確認する
-- 問題がなければcommit・push、レビュー依頼へ進む
+- commit・pushを実施し、レビュー依頼へ進む
 
 ---
 
