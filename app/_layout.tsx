@@ -22,6 +22,8 @@ export default function RootLayout() {
           <Stack.Screen name="route-plan" options={{ title: 'ルート確認' }} />
           <Stack.Screen name="drive-recording" options={{ title: 'ドライブ記録', headerBackVisible: false }} />
           <Stack.Screen name="drive-summary" options={{ title: '記録結果確認' }} />
+          <Stack.Screen name="drive-diary-create" options={{ title: '日記作成' }} />
+          <Stack.Screen name="drive-diary-confirm" options={{ title: '日記確認' }} />
         </Stack>
       </DriveFlowProvider>
       <StatusBar style="auto" />

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 
 import { isValidCoordinates } from '@/services/location/coordinates';
 import type { DriveConditions } from '@/types/drive';
+import type { DriveDiaryEntry } from '@/types/drive-diary';
 import type { DriveRecordingResult } from '@/types/drive-recording';
 import type { DepartureSelection } from '@/types/location';
 import type { RouteOption } from '@/types/route';
@@ -18,6 +19,10 @@ interface DriveFlowState {
   selectedSpotIds: string[];
   /** 直近のドライブ記録結果。次の日記作成機能等から利用する、記録終了時点のスナップショット。 */
   driveRecord: DriveRecordingResult | null;
+  /** 作成済みのドライブ日記。将来AsyncStorage等へ永続化する際もそのまま移行できる配列構造にしている。 */
+  diaryEntries: DriveDiaryEntry[];
+  /** 直近に作成した日記のid。日記作成後の確認画面が参照する。 */
+  latestDiaryEntryId: string | null;
 }
 
 interface DriveFlowContextValue extends DriveFlowState {
@@ -29,6 +34,7 @@ interface DriveFlowContextValue extends DriveFlowState {
   setSelectedSpotId: (routeId: string, spotId: string) => void;
   setSelectedSpotIds: (routeId: string, spotIds: string[]) => void;
   setDriveRecord: (record: DriveRecordingResult) => void;
+  addDiaryEntry: (entry: DriveDiaryEntry) => void;
   reset: () => void;
 }
 
@@ -46,6 +52,8 @@ const initialState: DriveFlowState = {
   selectedRouteId: null,
   ...emptySpotState,
   driveRecord: null,
+  diaryEntries: [],
+  latestDiaryEntryId: null,
 };
 
 const DriveFlowContext = createContext<DriveFlowContextValue | null>(null);
@@ -157,6 +165,14 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, driveRecord: record }));
   }, []);
 
+  const addDiaryEntry = useCallback((entry: DriveDiaryEntry) => {
+    setState((prev) => ({
+      ...prev,
+      diaryEntries: [...prev.diaryEntries, entry],
+      latestDiaryEntryId: entry.id,
+    }));
+  }, []);
+
   const reset = useCallback(() => {
     setState(initialState);
   }, []);
@@ -172,6 +188,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotId,
       setSelectedSpotIds,
       setDriveRecord,
+      addDiaryEntry,
       reset,
     }),
     [
@@ -184,6 +201,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotId,
       setSelectedSpotIds,
       setDriveRecord,
+      addDiaryEntry,
       reset,
     ]
   );

@@ -21,6 +21,49 @@
 
 ---
 
+## 2026-09-01
+
+`feature/drive-diary` ブランチ(`feature/drive-recording`からの派生)で、ドライブ日記プロトタイプ(記録結果→日記作成→日記確認)を実装した(commit・pushは未実施)。
+
+### 完了したこと
+
+- パッケージ追加の事前確認: 写真ライブラリ選択には新規パッケージ(`expo-image-picker`)が必要なため、実装前にユーザーへ確認し、合意を得たうえで`npx expo install expo-image-picker`を実行した(CLAUDE.md/AGENTS.mdの依存関係追加ルールに従った)
+- `app.json`の`plugins`に`expo-image-picker`を追加し、iOS写真ライブラリ許可文言(日本語)を設定した
+- `app/drive-summary.tsx`(記録結果確認画面)に「日記を作成」ボタンを追加し、日記作成画面へ進めるようにした。既存の「ホームに戻る」はsecondaryボタンへ変更
+- 日記作成画面(`app/drive-diary-create.tsx`)を新規作成
+  - タイトル・ひとことメモ・日付(YYYY-MM-DD、初期値は記録終了日時)をテキスト入力で編集できる
+  - 走行距離・走行時間・選択したルート・経由したスポットは`driveRecord`(記録結果)からの読み取り専用表示とした(自由入力にしない理由は`docs/DECISIONS.md`に記録)
+  - 「写真を選ぶ」から`services/media/photo-picker.ts`(新規)経由で`expo-image-picker`を呼び出し、端末の写真ライブラリから最大3枚選択できる。許可拒否・エラー・機能非対応時も例外を投げず、案内メッセージを表示したうえで写真なしのまま日記作成を続けられるようにした
+  - タイトル未入力・日付形式不正の場合はエラーメッセージを表示し保存をブロックする
+  - 保存時に`driveRecord`の値をコピーして`DriveDiaryEntry`(JSON化可能なプレーンオブジェクト)を組み立て、`DriveFlowContext`の`addDiaryEntry`へ渡す
+- 日記確認画面(`app/drive-diary-confirm.tsx`)を新規作成。保存したタイトル・メモ・日付・写真・走行距離・走行時間・選択したルート・経由したスポットを表示し、次の共有機能で利用する想定のデータであることを案内する。「ホームに戻る」でホーム画面へ戻れる
+- `contexts/drive-flow-context.tsx`に`diaryEntries: DriveDiaryEntry[]`・`latestDiaryEntryId`・`addDiaryEntry`を追加。既存の`driveRecord`等と同じくアプリ内状態(React Context)のみで保持し、永続化(AsyncStorage・Supabase等)は行っていない
+- `types/drive-diary.ts`を新規作成し、`DriveDiaryEntry`・`DiaryPhoto`の型を定義。将来の共有機能(写真・GPSルート線・距離・時間・タイトルの再利用)に向けて、記録した生のGPS座標配列(track)は加工せずそのまま保持する方針にした(`docs/DECISIONS.md`に記録)
+- `app/_layout.tsx`に`drive-diary-create`・`drive-diary-confirm`の2画面を追加
+- 既存のルート探索・スポット探索・ドライブ記録(`app/drive-recording.tsx`・`hooks/use-drive-recording.ts`等)は変更していない
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし(`app/drive-diary-create.tsx`・`app/drive-diary-confirm.tsx`追加にともない、`npx expo start --web`を一度実行してexpo-routerのtyped routes型定義を再生成する必要があった)
+- `npm run lint`: エラー・警告なし
+- `npx expo start --web`: Metroが起動し、Web向けバンドル(entry.js / render.js)がエラーなく完了することを確認
+- 既存の出発地点選択・ドライブ条件入力・ルート比較・ルート決定確認・スポット探索・ルート確認・ドライブ記録の画面・ロジックは変更していないことをdiffで確認(`app/drive-summary.tsx`はボタン追加のみ)
+- **実機(iOS Expo Go)で以下を確認済み**: 記録結果画面から「日記を作成」へ進めること、タイトル・メモ・日付を入力できること、写真を最大3枚選べること、写真なしでも保存できること、日記確認画面に距離・時間・選択したルート・経由したスポット・写真が表示されること
+- commit前の最終確認として、`git status`・`git diff`でAPIキー・トークン・実在住所・正確な位置情報・個人情報が差分に含まれていないことを確認した
+
+### 未完了
+
+- タイトル未入力・日付形式不正時のエラーメッセージ表示(バリデーション)の実機確認
+- 日記の一覧・編集・削除(ホーム画面の「記録を見る」は引き続き準備中)は今回スコープ外で未着手
+- 日記データのローカル永続化(AsyncStorage等、アプリ再起動後も残す)、クラウド同期、共有画像生成・Instagram共有・Supabase・外部APIは今回スコープ外で未着手
+
+### 次にやること
+
+- `feature/drive-diary`ブランチへcommit・push(mainには触れない)し、レビュー依頼へ進む
+- 次フェーズ(共有機能・記録の永続化)の要件整理に着手する
+
+---
+
 ## 2026-08-31(4)
 
 `feature/drive-recording` ブランチで、ルート決定後のドライブ記録プロトタイプ(ドライブ開始→走行記録→終了→記録結果確認)を実装した(commit・pushは未実施)。

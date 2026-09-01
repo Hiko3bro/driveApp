@@ -45,6 +45,12 @@
         {
           "locationWhenInUsePermission": "現在地から出発できるドライブルートを提案するために使用します。"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ドライブ日記に添付する写真を選ぶために使用します。"
+        }
       ]
     ],
     "experiments": {
