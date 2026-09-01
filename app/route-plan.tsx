@@ -69,10 +69,10 @@ export default function RoutePlanScreen() {
       return '出発地点の位置情報を確認できませんでした。出発地点を選び直してください。';
     }
     if (plan.path.length < 2 || !plan.path.every(isValidCoordinates)) {
-      return '更新後のルート情報を確認できませんでした。経由地を選び直してください。';
+      return '更新後のルート情報を確認できませんでした。寄るところを選び直してください。';
     }
     if (selectedSpots.some((spot) => !isValidCoordinates(spot.coordinates))) {
-      return '経由地の位置情報を確認できませんでした。経由地を選び直してください。';
+      return '寄るところの位置情報を確認できませんでした。寄るところを選び直してください。';
     }
     return null;
   }, [departure, plan, selectedSpots]);
@@ -146,7 +146,7 @@ export default function RoutePlanScreen() {
       const latestPlan = calculateSpotRoutePlan(route, selectedSpots, conditions);
       if (!latestPlan.isWithinBudget) {
         setDecisionError(
-          latestPlan.budgetMessage ?? '選択した条件の時間内に収まりません。経由地を選び直してください。'
+          latestPlan.budgetMessage ?? '選んだ条件の時間内に収まりません。寄るところを選び直してください。'
         );
         return;
       }
@@ -170,7 +170,7 @@ export default function RoutePlanScreen() {
           <Text style={styles.completedBadge}>ルート内容を決定しました</Text>
           <Text style={styles.completedTitle}>{route.name}</Text>
           <Text style={styles.completedMeta}>
-            {hasSpots ? `経由地 ${selectedSpots.length}件 ・ ` : ''}
+            {hasSpots ? `寄るところ ${selectedSpots.length}件 ・ ` : ''}
             {plan.distanceKm}km ・ 約{plan.durationMinutes}分
           </Text>
           <View style={styles.completedNotice}>
@@ -223,7 +223,7 @@ export default function RoutePlanScreen() {
 
         {hasSpots && (
           <>
-            <Text style={styles.sectionTitle}>追加した経由地</Text>
+            <Text style={styles.sectionTitle}>寄るところ</Text>
             {selectedSpots.map((spot, index) => (
               <View key={spot.id} style={styles.stopRow}>
                 <View style={styles.stopOrder}>
@@ -232,7 +232,7 @@ export default function RoutePlanScreen() {
                 <View style={styles.stopContent}>
                   <Text style={styles.stopName}>{spot.name}</Text>
                   <Text style={styles.stopMeta}>
-                    {spot.category} ・ 追加 約{spot.extraMinutes}分 ・ モック
+                    {spot.category} ・ 寄ると約{spot.extraMinutes}分 ・ モック
                   </Text>
                 </View>
               </View>

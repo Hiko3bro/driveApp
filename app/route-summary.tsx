@@ -83,7 +83,7 @@ export default function RouteSummaryScreen() {
 
         <View style={styles.noticeBox}>
           <Text style={styles.noticeText}>
-            気になる場所があれば、周辺スポットから時間内に立ち寄れる経由地を最大3件まで追加できます(任意)。追加しなくても、このままナビを開始できます。
+            気になる場所があれば、周辺スポットから時間内に寄ってみたい場所を最大3件まで選べます(任意)。選ばなくても、このままナビを開始できます。
           </Text>
         </View>
       </ScrollView>

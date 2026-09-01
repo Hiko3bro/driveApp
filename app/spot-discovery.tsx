@@ -15,15 +15,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DriveMapView, type DriveMapViewHandle, type MapMarkerSpec } from '@/components/map/drive-map-view';
+import { OptionChip } from '@/components/ui/option-chip';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
-import { DEMO_MAP_REGION } from '@/services/location/coordinates';
+import { DEMO_MAP_REGION, isValidMapRegion } from '@/services/location/coordinates';
 import { computeRegionForPath } from '@/services/location/route-map-region';
 import { getSpotProvider, SpotDiscoveryError } from '@/services/spot';
 import { calculateSpotRoutePlan, SpotRoutePlanError } from '@/services/spot/spot-route-plan';
 import type { MapRegion } from '@/types/location';
 import type { RouteOption } from '@/types/route';
-import { MAX_SELECTED_SPOTS, type Spot, type SpotRoutePlan } from '@/types/spot';
+import {
+  MAX_SELECTED_SPOTS,
+  SPOT_BROWSE_FILTERS,
+  type Spot,
+  type SpotBrowseFilter,
+  type SpotRoutePlan,
+} from '@/types/spot';
 
 const CARD_MARGIN = 16;
 const CARD_GAP = 12;
@@ -77,7 +84,10 @@ export default function SpotDiscoveryScreen() {
   const isFocusedRef = useRef(false);
   const requestIdRef = useRef(0);
   const navigationInFlightRef = useRef(false);
-  const framedRouteIdRef = useRef<string | null>(null);
+  const framedKeyRef = useRef<string | null>(null);
+  // ユーザーが手動で操作した後も含め、地図に今表示されているregion(ズーム量含む)を保持する。
+  // マーカー/カード選択時はこれを使い、全体表示へ戻さずズームを維持したまま選択地点へ寄せる。
+  const currentRegionRef = useRef<MapRegion | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -85,6 +95,7 @@ export default function SpotDiscoveryScreen() {
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState<SpotBrowseFilter>('おすすめ');
 
   useEffect(() => {
     if (!departure) {
@@ -141,6 +152,7 @@ export default function SpotDiscoveryScreen() {
             );
           }
           initializeSpotDiscovery(route.id, foundSpots);
+          setSelectedCategory('おすすめ');
           setLoading(false);
         })
         .catch((error: unknown) => {
@@ -171,8 +183,16 @@ export default function SpotDiscoveryScreen() {
     () => (route && spotRouteId === route.id ? selectedSpotIds : []),
     [route, spotRouteId, selectedSpotIds]
   );
-  const selectedIndex = resolveSpotIndex(availableSpots, selectedSpotId);
-  const selectedSpot = selectedIndex >= 0 ? availableSpots[selectedIndex] : null;
+  // 「おすすめ」は絞り込まず、全カテゴリのスポットをそのまま表示する。
+  const categorizedSpots = useMemo(
+    () =>
+      selectedCategory === 'おすすめ'
+        ? availableSpots
+        : availableSpots.filter((spot) => spot.category === selectedCategory),
+    [availableSpots, selectedCategory]
+  );
+  const selectedIndex = resolveSpotIndex(categorizedSpots, selectedSpotId);
+  const selectedSpot = selectedIndex >= 0 ? categorizedSpots[selectedIndex] : null;
   const selectedStops = useMemo(
     () => resolveSpotsByIds(availableSpots, activeSelectedSpotIds),
     [availableSpots, activeSelectedSpotIds]
@@ -195,50 +215,72 @@ export default function SpotDiscoveryScreen() {
   );
 
   useEffect(() => {
-    if (
-      !mapReady ||
-      !route ||
-      availableSpots.length === 0 ||
-      !isFocusedRef.current ||
-      framedRouteIdRef.current === route.id
-    ) {
+    if (!mapReady || !route || categorizedSpots.length === 0 || !isFocusedRef.current) {
       return;
     }
-    framedRouteIdRef.current = route.id;
+    // ルート・カテゴリの組み合わせごとに一度だけカメラを合わせ、
+    // ユーザーが手動でパンした後は上書きしないようにする。
+    const framingKey = `${route.id}:${selectedCategory}`;
+    if (framedKeyRef.current === framingKey) {
+      return;
+    }
+    framedKeyRef.current = framingKey;
     mapRef.current?.animateToRegion(
-      computeRegionForPath([...route.path, ...availableSpots.map((spot) => spot.coordinates)]),
+      computeRegionForPath([...route.path, ...categorizedSpots.map((spot) => spot.coordinates)]),
       CAMERA_ANIMATION_MS
     );
-  }, [mapReady, route, availableSpots]);
+  }, [mapReady, route, categorizedSpots, selectedCategory]);
+
+  useEffect(() => {
+    cardScrollRef.current?.scrollTo({ x: 0, animated: false });
+  }, [selectedCategory]);
+
+  // 初回表示・カテゴリ切り替え時の全体表示(animateToRegionの結果含む)や
+  // ユーザーの手動パン・ズームの結果を継続して記録する。マーカー/カード選択時は
+  // このregionのズーム量(latitudeDelta/longitudeDelta)だけを引き継ぎ、
+  // 全体表示へ戻すfitToCoordinates相当の処理を再発火させないようにする。
+  const handleRegionChangeComplete = useCallback((region: MapRegion) => {
+    if (isValidMapRegion(region)) {
+      currentRegionRef.current = region;
+    }
+  }, []);
 
   const handleSelectSpot = useCallback(
     (spotId: string, scrollToCard: boolean) => {
       if (!route || spotRouteId !== route.id) {
         return;
       }
-      const index = availableSpots.findIndex((spot) => spot.id === spotId);
-      if (index < 0 || index >= availableSpots.length) {
+      const index = categorizedSpots.findIndex((spot) => spot.id === spotId);
+      if (index < 0 || index >= categorizedSpots.length) {
         setSelectionError('選択したスポットを確認できませんでした。もう一度選んでください。');
         return;
       }
 
-      const spot = availableSpots[index];
+      const spot = categorizedSpots[index];
       setSelectedSpotId(route.id, spot.id);
       setSelectionError(null);
       if (scrollToCard) {
         cardScrollRef.current?.scrollTo({ x: index * cardStride, animated: true });
       }
       if (mapReady && isFocusedRef.current) {
-        mapRef.current?.animateToRegion(
-          computeRegionForPath([...route.path, spot.coordinates]),
-          CAMERA_ANIMATION_MS
-        );
+        // 全体を収める計算(computeRegionForPath)はここでは使わない。現在のズーム量を
+        // 保ったまま選択スポットへ軽くセンタリングするだけにとどめ、手動ズームを壊さない。
+        const zoomRegion = currentRegionRef.current;
+        const nextRegion: MapRegion = zoomRegion
+          ? {
+              latitude: spot.coordinates.latitude,
+              longitude: spot.coordinates.longitude,
+              latitudeDelta: zoomRegion.latitudeDelta,
+              longitudeDelta: zoomRegion.longitudeDelta,
+            }
+          : computeRegionForPath([...route.path, spot.coordinates]);
+        mapRef.current?.animateToRegion(nextRegion, CAMERA_ANIMATION_MS);
       }
     },
     [
       route,
       spotRouteId,
-      availableSpots,
+      categorizedSpots,
       setSelectedSpotId,
       cardStride,
       mapReady,
@@ -247,17 +289,17 @@ export default function SpotDiscoveryScreen() {
 
   const handleScrollEnd = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (availableSpots.length === 0 || !Number.isFinite(event.nativeEvent.contentOffset.x)) {
+      if (categorizedSpots.length === 0 || !Number.isFinite(event.nativeEvent.contentOffset.x)) {
         return;
       }
       const rawIndex = Math.round(event.nativeEvent.contentOffset.x / cardStride);
-      const index = Math.min(Math.max(rawIndex, 0), availableSpots.length - 1);
-      const spot = availableSpots[index];
+      const index = Math.min(Math.max(rawIndex, 0), categorizedSpots.length - 1);
+      const spot = categorizedSpots[index];
       if (spot) {
         handleSelectSpot(spot.id, false);
       }
     },
-    [availableSpots, cardStride, handleSelectSpot]
+    [categorizedSpots, cardStride, handleSelectSpot]
   );
 
   const handleToggleStop = useCallback(
@@ -273,7 +315,7 @@ export default function SpotDiscoveryScreen() {
 
       const isAdded = activeSelectedSpotIds.includes(spotId);
       if (!isAdded && activeSelectedSpotIds.length >= MAX_SELECTED_SPOTS) {
-        setSelectionError(`経由地は最大${MAX_SELECTED_SPOTS}件まで追加できます。`);
+        setSelectionError(`寄るところは最大${MAX_SELECTED_SPOTS}件まで選べます。`);
         return;
       }
 
@@ -282,7 +324,7 @@ export default function SpotDiscoveryScreen() {
         : [...activeSelectedSpotIds, spotId];
       const nextSpots = resolveSpotsByIds(availableSpots, nextIds);
       if (nextSpots.length !== nextIds.length) {
-        setSelectionError('経由地を更新できませんでした。スポットを選び直してください。');
+        setSelectionError('寄るところを更新できませんでした。もう一度選び直してください。');
         return;
       }
 
@@ -290,7 +332,7 @@ export default function SpotDiscoveryScreen() {
         const nextPlan = calculateSpotRoutePlan(route, nextSpots, conditions);
         if (!isAdded && !nextPlan.isWithinBudget) {
           setSelectionError(
-            nextPlan.budgetMessage ?? '選択した条件の時間内に収まりません。別のスポットを選んでください。'
+            nextPlan.budgetMessage ?? '選んだ条件の時間内に収まりません。別のスポットを選んでください。'
           );
           return;
         }
@@ -300,7 +342,7 @@ export default function SpotDiscoveryScreen() {
         setSelectionError(
           error instanceof SpotRoutePlanError
             ? error.message
-            : '経由地を更新できませんでした。もう一度お試しください。'
+            : '寄るところを更新できませんでした。もう一度お試しください。'
         );
       }
     },
@@ -326,7 +368,7 @@ export default function SpotDiscoveryScreen() {
 
     const latestStops = resolveSpotsByIds(availableSpots, activeSelectedSpotIds);
     if (latestStops.length !== activeSelectedSpotIds.length) {
-      setSelectionError('追加した経由地を確認できませんでした。スポットを選び直してください。');
+      setSelectionError('選んだ寄るところを確認できませんでした。もう一度選び直してください。');
       return;
     }
 
@@ -334,7 +376,7 @@ export default function SpotDiscoveryScreen() {
       const latestPlan = calculateSpotRoutePlan(route, latestStops, conditions);
       if (!latestPlan.isWithinBudget) {
         setSelectionError(
-          latestPlan.budgetMessage ?? '選択した条件の時間内に収まりません。経由地を見直してください。'
+          latestPlan.budgetMessage ?? '選んだ条件の時間内に収まりません。寄るところを見直してください。'
         );
         return;
       }
@@ -367,7 +409,7 @@ export default function SpotDiscoveryScreen() {
     );
   }
 
-  if (loadError || availableSpots.length === 0 || !selectedSpot) {
+  if (loadError || availableSpots.length === 0) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.centerContent}>
@@ -397,14 +439,14 @@ export default function SpotDiscoveryScreen() {
       color: '#718096',
     })),
   ];
-  const spotMarkers: MapMarkerSpec[] = availableSpots.map((spot) => {
+  const spotMarkers: MapMarkerSpec[] = categorizedSpots.map((spot) => {
     const order = selectedOrderById.get(spot.id);
     return {
       id: spot.id,
       coordinate: spot.coordinates,
       title: order ? `${order}. ${spot.name}` : spot.name,
-      description: `${spot.category}・追加 約${spot.extraMinutes}分・モック`,
-      color: spot.id === selectedSpot.id ? '#e8562f' : order ? '#2e8b57' : '#0a7ea4',
+      description: `${spot.category}・寄ると約${spot.extraMinutes}分・モック`,
+      color: selectedSpot && spot.id === selectedSpot.id ? '#e8562f' : order ? '#2e8b57' : '#0a7ea4',
       onPress: () => handleSelectSpot(spot.id, true),
     };
   });
@@ -416,39 +458,62 @@ export default function SpotDiscoveryScreen() {
         <Text style={styles.mockNotice}>表示中のスポットはすべて架空のモックデータです</Text>
       </View>
 
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.categoryRow}>
+        {SPOT_BROWSE_FILTERS.map((filter) => (
+          <OptionChip
+            key={filter}
+            label={filter}
+            selected={selectedCategory === filter}
+            onPress={() => setSelectedCategory(filter)}
+          />
+        ))}
+      </ScrollView>
+
       <DriveMapView
         ref={mapRef}
         style={styles.map}
         initialRegion={initialRegion}
         markers={[...routeMarkers, ...spotMarkers]}
         polyline={route.path}
-        contentKey={`spot-${route.id}`}
+        contentKey={`spot-${route.id}-${selectedCategory}`}
         onMapReady={() => setMapReady(true)}
+        onRegionChangeComplete={handleRegionChangeComplete}
       />
 
-      <ScrollView
-        ref={cardScrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={cardStride}
-        decelerationRate="fast"
-        contentContainerStyle={styles.cardList}
-        onMomentumScrollEnd={handleScrollEnd}>
-        {availableSpots.map((spot) => {
-          const order = selectedOrderById.get(spot.id);
-          return (
-            <SpotCard
-              key={spot.id}
-              spot={spot}
-              selected={spot.id === selectedSpot.id}
-              selectedOrder={order}
-              width={cardWidth}
-              onSelect={() => handleSelectSpot(spot.id, false)}
-              onToggle={() => handleToggleStop(spot.id)}
-            />
-          );
-        })}
-      </ScrollView>
+      {categorizedSpots.length === 0 ? (
+        <View style={styles.emptyCategoryBox}>
+          <Text style={styles.emptyCategoryText}>
+            このカテゴリで寄れそうな場所は見つかりませんでした。他のカテゴリも見てみてください。
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          ref={cardScrollRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={cardStride}
+          decelerationRate="fast"
+          contentContainerStyle={styles.cardList}
+          onMomentumScrollEnd={handleScrollEnd}>
+          {categorizedSpots.map((spot) => {
+            const order = selectedOrderById.get(spot.id);
+            return (
+              <SpotCard
+                key={spot.id}
+                spot={spot}
+                selected={selectedSpot !== null && spot.id === selectedSpot.id}
+                selectedOrder={order}
+                width={cardWidth}
+                onSelect={() => handleSelectSpot(spot.id, false)}
+                onToggle={() => handleToggleStop(spot.id)}
+              />
+            );
+          })}
+        </ScrollView>
+      )}
 
       <View style={styles.policyNotice}>
         <Text style={styles.policyText}>
@@ -459,11 +524,11 @@ export default function SpotDiscoveryScreen() {
       <View style={styles.footer}>
         {selectionError && <Text style={styles.errorText}>{selectionError}</Text>}
         <Text style={styles.planSummary}>
-          経由地 {activeSelectedSpotIds.length}/{MAX_SELECTED_SPOTS}
+          寄るところ {activeSelectedSpotIds.length}/{MAX_SELECTED_SPOTS}
           {currentPlan ? ` ・ ${currentPlan.distanceKm}km ・ 約${currentPlan.durationMinutes}分` : ''}
         </Text>
         <PrimaryButton
-          label={isNavigating ? 'ルートを確認しています…' : '追加後のルートを確認'}
+          label={isNavigating ? 'ルートを確認しています…' : '寄り道を確認する'}
           onPress={handleReviewRoute}
           disabled={
             isNavigating ||
@@ -498,15 +563,15 @@ function SpotCard({
         <View style={styles.badgeRow}>
           <Text style={styles.categoryBadge}>{spot.category}</Text>
           <Text style={styles.mockBadge}>モック</Text>
-          {selectedOrder && <Text style={styles.orderBadge}>経由地 {selectedOrder}</Text>}
+          {selectedOrder && <Text style={styles.orderBadge}>寄るところ {selectedOrder}</Text>}
         </View>
         <Text style={styles.spotName}>{spot.name}</Text>
-        <Text style={styles.extraTime}>ルートへ追加すると約{spot.extraMinutes}分</Text>
+        <Text style={styles.extraTime}>寄ると約{spot.extraMinutes}分</Text>
         <Text style={styles.description}>{spot.description}</Text>
         <Text style={styles.recommendation}>おすすめ理由: {spot.recommendation}</Text>
       </Pressable>
       <PrimaryButton
-        label={selectedOrder ? '経由地から外す' : '経由地に追加'}
+        label={selectedOrder ? '行くのをやめる' : 'ここ寄ってみる'}
         variant={selectedOrder ? 'secondary' : 'primary'}
         onPress={onToggle}
         style={styles.cardButton}
@@ -552,6 +617,23 @@ const styles = StyleSheet.create({
   mockNotice: {
     fontSize: 11,
     color: '#7a5b18',
+  },
+  categoryRow: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  emptyCategoryBox: {
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#f5f6f7',
+    padding: 16,
+  },
+  emptyCategoryText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#5b6770',
+    textAlign: 'center',
   },
   map: {
     flex: 1,

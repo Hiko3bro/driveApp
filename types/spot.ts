@@ -1,6 +1,18 @@
 import type { Coordinates } from '@/types/location';
 
-export type SpotCategory = '絶景' | 'カフェ' | 'グルメ' | '休憩' | '穴場';
+export type SpotCategory = 'ごはん' | 'カフェ' | '絶景' | '温泉' | 'アクティビティ';
+
+/** スポット探索画面のカテゴリ切り替え用。「おすすめ」は絞り込まず全カテゴリから表示する特別な値。 */
+export type SpotBrowseFilter = 'おすすめ' | SpotCategory;
+
+export const SPOT_BROWSE_FILTERS: SpotBrowseFilter[] = [
+  'おすすめ',
+  'ごはん',
+  'カフェ',
+  '絶景',
+  '温泉',
+  'アクティビティ',
+];
 
 export interface Spot {
   id: string;
