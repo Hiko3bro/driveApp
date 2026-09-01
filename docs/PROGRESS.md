@@ -21,6 +21,48 @@
 
 ---
 
+## 2026-09-01(2)
+
+`feature/drive-sharing` ブランチ(`feature/drive-diary`からの派生)で、ドライブ日記の共有機能プロトタイプ(日記確認→共有テンプレート選択→共有プレビュー→システム共有)を実装した(commit・pushは未実施)。
+
+### 完了したこと
+
+- パッケージ追加の事前確認: 共有画像の生成(画面キャプチャ)とOS共有シートの起動には新規パッケージが必要なため、実装前にユーザーへ選択肢(パッケージ追加の有無、GPSルート線をreact-native-svgで描くか否か)を提示し、合意を得たうえで`npx expo install react-native-view-shot expo-sharing`を実行した(CLAUDE.md/AGENTS.mdの依存関係追加ルール、および今回の要件で明示された事前確認に従った)。GPSルート線はreact-native-svgを追加せず、Viewを回転させて組み合わせる方式にした
+- `services/sharing/share-route.ts`(新規): `DriveDiaryEntry.track`(生の緯度経度配列)を書き換えず、共有カード内の0〜1相対座標(`SharePoint[]`)へ変換する`projectTrackToSharePoints()`を実装。経度方向は平均緯度のcosで補正し、ルート線の形が実際の移動比率に近くなるようにした。開始・終了地点付近を既定割合(8%、最大40%までクランプ)だけ間引く`maskRouteEndpoints()`という小さな汎用ユーティリティも実装し、変換パイプラインからデフォルトで利用している(本格的なプライバシーマスクUIは今回のスコープ外)
+- `services/sharing/share-image.ts`(新規): 共有カードのViewを`react-native-view-shot`でPNG画像化し、`expo-sharing`でOS標準の共有シートへ渡す`shareCardView()`を実装。画像化・共有シート起動どちらの失敗時も例外を投げず、呼び出し側がエラーメッセージを表示して再試行できるようにした
+- `components/sharing/route-line.tsx`(新規): 正規化済みの相対座標だけからルート線を描く`RouteLine`コンポーネント。地図タイル・地図アプリのスクリーンショットは使用せず、区間ごとに回転させた細いViewを並べて線を表現する(react-native-svgは未使用)
+- 共有カードテンプレートを3種類新規作成(`components/sharing/`)
+  - `share-card-photo.tsx`(PHOTO): 日記の1枚目の写真を全面背景にし、GPSルート線を重ね、下部にタイトル・日付・距離・時間を表示。写真がない場合は安全な単色背景にフォールバックする
+  - `share-card-data.tsx`(DATA): 写真を使わず、走行距離・走行時間を大きな数字で、経由スポット数・日付・ルート名・タイトルを添える、Spotify Wrapped風のカード
+  - `share-card-memory.tsx`(MEMORY): 写真1〜3枚・タイトル・メモ・日付・距離/時間に加え、隅に小さなGPSルート線を表示。写真がない場合はプレースホルダー表示にする
+  - 3テンプレートとも`components/sharing/card-dimensions.ts`で定義した9:16(Instagram Stories想定)のサイズで統一
+- 共有画面(`app/drive-diary-share.tsx`、新規)を作成。PHOTO/DATA/MEMORYを`OptionChip`(既存コンポーネントを再利用)で切り替えるとプレビューが即座に更新される。「共有する」を押すと表示中のカードを画像化し、iOSの共有シート(Instagram/LINE/AirDrop/保存等)を開く。プレビュー画面には、緯度経度や住所などの正確な位置情報を文字として表示していない旨の注記も入れた
+- `app/drive-diary-confirm.tsx`(日記確認画面)に「共有する」ボタンを追加し、共有画面へ進めるようにした。既存の「ホームに戻る」はsecondaryボタンへ変更
+- `app/_layout.tsx`に`drive-diary-share`画面を追加
+- `types/drive-sharing.ts`(新規)に`ShareTemplateId`とラベル定義を追加
+- 既存のルート探索・スポット探索・ドライブ記録・日記作成/確認のロジックは変更していない(`drive-diary-confirm.tsx`はボタン追加のみ)
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし(`app/drive-diary-share.tsx`追加にともない、`npx expo start --web`を一度実行してexpo-routerのtyped routes型定義を再生成する必要があった。また`react-native-view-shot`の`captureRef`へ渡す`RefObject`の型をuseRefの実際の型(`View | null`)に合わせて修正した)
+- `npm run lint`: エラー・警告なし
+- `npx expo start --web`: Metroが起動し、Web向けバンドル(entry.js / render.js)がエラーなく完了することを確認(共有カードのプレビュー用スタイルで`shadow*`スタイルがWeb向けに非推奨という警告が出るが、iOSネイティブでは標準のスタイルであるため今回は変更していない)
+- 共有カードのプレビュー・画像内に、緯度経度や住所などの正確な位置情報を文字として表示していないことをコードレビューで確認
+- 既存の出発地点選択・ドライブ条件入力・ルート比較・ルート決定確認・スポット探索・ルート確認・ドライブ記録・日記作成・日記確認の画面・ロジックは変更していないことをdiffで確認
+- **実機(iOS Expo Go)で共有機能(日記確認→「共有する」→PHOTO/DATA/MEMORY切り替え→「共有する」→共有シート起動)が正常に動作することを確認済み**。`react-native-view-shot`によるカード画像化もこの環境で問題なく動作することを確認した
+- commit前の最終確認として、`git status`・`git diff`でAPIキー・トークン・実在住所・正確な位置情報・個人情報が差分に含まれていないことを確認した
+
+### 未完了
+
+- 本格的なプライバシーマスク(道路上の距離基準での除外、UI上の設定切り替えなど)、共有カード・日記データのローカル永続化、Instagram専用SDK/Meta連携、「みんなのドライブ」投稿機能は今回スコープ外で未着手
+
+### 次にやること
+
+- `feature/drive-sharing`ブランチへcommit・push(mainには触れない)し、レビュー依頼へ進む
+- 次フェーズ(記録・日記・共有カードのローカル永続化)の要件整理に着手する
+
+---
+
 ## 2026-09-01
 
 `feature/drive-diary` ブランチ(`feature/drive-recording`からの派生)で、ドライブ日記プロトタイプ(記録結果→日記作成→日記確認)を実装した(commit・pushは未実施)。

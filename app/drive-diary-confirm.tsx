@@ -81,13 +81,14 @@ export default function DriveDiaryConfirmScreen() {
         <View style={styles.noticeBox}>
           <Text style={styles.noticeTitle}>次に実装予定の機能</Text>
           <Text style={styles.noticeText}>
-            この日記(タイトル・写真・走行距離・走行時間・記録したGPSルート)は、今後の共有機能から利用できる状態で保持しています。共有画像の生成・SNS共有は今回のスコープ外で、まだ実装していません。
+            Instagram専用連携・投稿機能・「みんなのドライブ」は今回のスコープ外で、まだ実装していません。
           </Text>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="ホームに戻る" onPress={() => router.replace('/')} />
+        <PrimaryButton label="共有する" onPress={() => router.push('/drive-diary-share')} />
+        <PrimaryButton label="ホームに戻る" variant="secondary" onPress={() => router.replace('/')} />
       </View>
     </SafeAreaView>
   );
@@ -192,5 +193,6 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     paddingTop: 8,
+    gap: 10,
   },
 });

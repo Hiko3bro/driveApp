@@ -24,6 +24,7 @@ export default function RootLayout() {
           <Stack.Screen name="drive-summary" options={{ title: '記録結果確認' }} />
           <Stack.Screen name="drive-diary-create" options={{ title: '日記作成' }} />
           <Stack.Screen name="drive-diary-confirm" options={{ title: '日記確認' }} />
+          <Stack.Screen name="drive-diary-share" options={{ title: '共有する' }} />
         </Stack>
       </DriveFlowProvider>
       <StatusBar style="auto" />
