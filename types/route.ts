@@ -17,4 +17,6 @@ export interface RouteOption {
   path: Coordinates[];
   /** おすすめ理由。 */
   highlight: string;
+  /** どんな人向けのルートかを表す短い説明。 */
+  audience: string;
 }

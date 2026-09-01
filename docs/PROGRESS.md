@@ -21,6 +21,49 @@
 
 ---
 
+## 2026-09-01(4)
+
+`feature/route-condition-improvements` ブランチ(`feature/spot-discovery-improvements`からの派生)で、ルート提案時の条件入力を「単なるナビ条件」から「今日どんなドライブがしたいか」を選べる体験へ改善した(commit・pushは未実施)。
+
+### 完了したこと
+
+- `types/drive.ts`: `Mood`型の値を、既存の7値(view/sea/mountain/cafe/nightview/hidden/omakase)から新しい8値(scenic/coastal/mountain/nightDrive/leisurely/detourRich/short/homeFocused、ラベルは景色重視/海沿い/山道/夜ドライブ/のんびり/寄り道多め/短時間/帰宅時間重視)へ差し替えた。型名`Mood`・ラベル定数`MOOD_LABELS`はそのまま流用し、`DriveConditions.mood`(単一選択)は`moods: Mood[]`(複数選択、最大`MAX_SELECTED_MOODS`=3件)へ変更した(理由は`docs/DECISIONS.md`に記録)
+- `AvailableTime`に`'custom'`を追加し、`DriveConditions.customAvailableMinutes?: number`を新設。`AVAILABLE_TIME_LABELS`にも「時間を指定」を追加した
+- `formatMinutesLabel()`・`summarizeDriveConditions()`を`types/drive.ts`に追加。選んだ条件を「景色重視・海沿い・2時間くらい」のような1行の文字列にまとめる
+- 使わなくなった`DETOUR_LEVEL_LABELS`(専用UIセクションの削除にともない未使用になった)を削除した
+- `services/route/time-budget.ts`: `resolveAvailableMinutes()`を追加し、`availableTime`が`'custom'`のときは`customAvailableMinutes`(未設定時は2時間相当へフォールバック)を使うようにした。既存の4つの固定値(1h/2h/3h/half-day)の分岐・帰着時刻との比較ロジックは変更していない
+- `services/route/mock-route-provider.ts`: `buildArchetypes(conditions)`を新設し、3ルート案の役割(景色重視/バランス/3案目)は固定のまま、名前・説明・タグ・「どんな人向けか」・平均速度・経由地の数・時間予算の使用割合を、選んだ`moods`・`detourLevel`に応じて組み立てるように変更した。3案目は「短時間」を選んでいれば「短時間ルート」、選んでいなければ「のんびりルート」になる。既存の二分探索によるルートフィッティング(`buildRoute`内の縮尺探索)・時間予算チェックのロジックは変更していない
+- `types/route.ts`: `RouteOption`に`audience: string`(どんな人向けか)を追加。`RouteOption`を組み立てているのは`mock-route-provider.ts`だけであることを確認したうえで必須フィールドにした(理由は`docs/DECISIONS.md`に記録)
+- `app/conditions.tsx`を全面的に作り替え
+  - 画面上部に「今日はどんなドライブにする?」の見出しを追加
+  - 「今日の気分」(旧「気分」)をチップの複数選択(最大3件、任意)にし、上限に達した場合は案内メッセージを表示する
+  - 「使える時間」→「どれくらい走る?」に改称し、「時間を指定」を選ぶと30分〜5時間の候補チップが追加で表示される
+  - 「帰着地点」→「戻り方」、「帰着時刻(目安)」→「何時ごろ戻る?」に改称(選択肢自体は変更していない)
+  - 「寄り道」の専用チップ行を削除し、送信時に`moods`から`DetourLevel`を導出する(「寄り道多め」→多め、「短時間」→少なめ、それ以外→普通)
+  - 送信ボタンを「ルートを提案してもらう」→「今日のルートを見つける」に変更
+- `app/route-compare.tsx`・`app/route-summary.tsx`: 画面上部に`summarizeDriveConditions()`による選んだ条件の要約表示を追加。ルートカードに`route.audience`(どんな人向けか)の表示を追加
+- 既存のルート比較・スポット探索・ドライブ記録・日記・共有機能のロジックは変更していない(`route-compare.tsx`・`route-summary.tsx`は表示追加のみ)
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- `npx expo start --web`: Metroが起動し、Web向けバンドルがエラーなく完了することを確認(共有画面由来の`shadow*`非推奨警告のみで、今回の変更によるエラー・警告はなし)
+- `conditions.mood`(旧フィールド)を参照している箇所が`app/conditions.tsx`・`services/route/mock-route-provider.ts`以外にないことをコードレビュー・grepで確認済み。`services/spot/spot-route-plan.ts`は`DriveConditions`を丸ごと`resolveEffectiveTimeBudget`へ渡すだけで、`mood`・`detourLevel`を直接参照していないため、今回の変更の影響を受けないことを確認した
+- 既存のルート探索・スポット探索・ドライブ記録・日記・共有機能の画面・ロジックは変更していないことをdiffで確認
+
+### 未完了
+
+- 実機(iOS Expo Go)での通し確認: 「今日の気分」の複数選択(上限・解除)、「時間を指定」の候補チップ、条件に応じた3ルートの違い(距離・時間・タグ・audience)、ルート比較・ルート決定確認画面での条件要約表示
+- Google Routes API/Google Places API等の実データ接続、実交通情報・天気APIとの連携、複雑な日時計算(日付をまたぐ帰着時刻等)は今回スコープ外で未着手
+
+### 次にやること
+
+- 実機(Expo Go)で上記の一連の操作を確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+
+---
+
 ## 2026-09-01(3)
 
 `feature/spot-discovery-improvements` ブランチ(`feature/drive-sharing`からの派生)で、既存のスポット探索機能を「経由地を追加する機能」から「ルート上で寄り道したくなる場所を見つける体験」に近づける改善を実装した(commit・pushは未実施)。

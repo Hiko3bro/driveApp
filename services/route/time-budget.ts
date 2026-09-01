@@ -1,13 +1,25 @@
-import type { AvailableTime, DriveConditions } from '@/types/drive';
+import type { DriveConditions } from '@/types/drive';
 
-const AVAILABLE_TIME_MINUTES: Record<AvailableTime, number> = {
+const AVAILABLE_TIME_MINUTES: Record<Exclude<DriveConditions['availableTime'], 'custom'>, number> = {
   '1h': 60,
   '2h': 120,
   '3h': 180,
   'half-day': 360,
 };
 
+/** "時間を指定"が選ばれたがcustomAvailableMinutesが未設定の場合の安全なフォールバック。 */
+const DEFAULT_CUSTOM_MINUTES = AVAILABLE_TIME_MINUTES['2h'];
+
 const MIN_ROUTE_BUDGET_MINUTES = 10;
+
+/** 「使える時間」を分数へ変換する。"custom"はcustomAvailableMinutesを使う。 */
+function resolveAvailableMinutes(conditions: DriveConditions): number {
+  if (conditions.availableTime === 'custom') {
+    const custom = conditions.customAvailableMinutes;
+    return Number.isFinite(custom) && (custom as number) > 0 ? (custom as number) : DEFAULT_CUSTOM_MINUTES;
+  }
+  return AVAILABLE_TIME_MINUTES[conditions.availableTime];
+}
 
 export type TimeBudgetResult =
   | { ok: true; minutes: number }
@@ -35,7 +47,7 @@ export function resolveEffectiveTimeBudget(
   conditions: DriveConditions,
   now = new Date()
 ): TimeBudgetResult {
-  const availableMinutes = AVAILABLE_TIME_MINUTES[conditions.availableTime];
+  const availableMinutes = resolveAvailableMinutes(conditions);
   const deadline = conditions.returnDeadline;
   if (!deadline) {
     return { ok: true, minutes: availableMinutes };

@@ -18,6 +18,7 @@ import { PrimaryButton } from '@/components/ui/primary-button';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION } from '@/services/location/coordinates';
 import { computeRegionForPath } from '@/services/location/route-map-region';
+import { summarizeDriveConditions } from '@/types/drive';
 import type { MapRegion } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 
@@ -169,8 +170,16 @@ export default function RouteCompareScreen() {
     })),
   ];
 
+  const conditionSummary = summarizeDriveConditions(conditions);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+      {conditionSummary.length > 0 && (
+        <View style={styles.conditionSummaryBox}>
+          <Text style={styles.conditionSummaryText}>今日の気分: {conditionSummary}</Text>
+        </View>
+      )}
+
       <DriveMapView
         ref={mapRef}
         style={styles.map}
@@ -234,6 +243,7 @@ function RouteCard({
         ))}
       </View>
       <Text style={styles.cardHighlight}>{route.highlight}</Text>
+      <Text style={styles.cardAudience}>{route.audience}</Text>
     </Pressable>
   );
 }
@@ -242,6 +252,15 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  conditionSummaryBox: {
+    marginHorizontal: 16,
+    marginTop: 8,
+  },
+  conditionSummaryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5b6770',
   },
   map: {
     flex: 1,
@@ -321,6 +340,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#0a7ea4',
     fontWeight: '600',
+    marginBottom: 6,
+  },
+  cardAudience: {
+    fontSize: 11,
+    color: '#8b959c',
   },
   footer: {
     padding: 16,

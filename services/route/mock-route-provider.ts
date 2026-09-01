@@ -5,7 +5,7 @@ import {
 } from '@/services/route/route-provider';
 import { resolveEffectiveTimeBudget } from '@/services/route/time-budget';
 import { isValidCoordinates, normalizeGeneratedCoordinates } from '@/services/location/coordinates';
-import type { DetourLevel, Mood } from '@/types/drive';
+import { MOOD_LABELS, type DetourLevel, type DriveConditions, type Mood } from '@/types/drive';
 import type { Coordinates } from '@/types/location';
 import type { RouteOption, RouteWaypoint } from '@/types/route';
 
@@ -68,14 +68,19 @@ interface RouteLeg {
   name: string;
 }
 
+/** 解決済みの1ルート案の設計図。conditions(気分・寄り道量)から都度組み立てる。 */
 interface RouteArchetype {
   id: string;
   name: string;
-  description: (mood: Mood) => string;
-  highlight: (mood: Mood) => string;
-  tags: (mood: Mood) => string[];
+  description: string;
+  highlight: string;
+  tags: string[];
+  /** どんな人向けのルートかを表す短い説明。 */
+  audience: string;
   averageSpeedKmH: number;
   legs: RouteLeg[];
+  /** 有効時間予算のうち、このルートが使う割合。 */
+  budgetUsageRatio: number;
 }
 
 interface RouteGeometry {
@@ -86,53 +91,134 @@ interface RouteGeometry {
 }
 
 const MOOD_SPOT_NAME: Record<Mood, string> = {
-  view: '見晴らしの丘',
-  sea: '海沿いの休憩ポイント',
+  scenic: '見晴らしの丘',
+  coastal: '海沿いの絶景ポイント',
   mountain: '山あいの展望台',
-  cafe: '小さなカフェ',
-  nightview: '夜景スポット',
-  hidden: '地元の穴場',
-  omakase: 'おすすめスポット',
+  nightDrive: '夜景スポット',
+  leisurely: 'のんびり過ごせる休憩処',
+  detourRich: '気になる寄り道スポット',
+  short: '効率よく回れる立ち寄り地',
+  homeFocused: '帰り道に寄れるスポット',
+};
+const DEFAULT_SPOT_NAME = '気になるスポット';
+
+const SCENIC_LEGS: RouteLeg[] = [
+  { bearing: 25, distanceKm: 1, name: '眺めの良い道' },
+  { bearing: 70, distanceKm: 1, name: '景色ポイント' },
+  { bearing: 130, distanceKm: 1, name: '展望スポット' },
+];
+
+const BALANCED_LEG_PATTERNS: Record<DetourLevel, RouteLeg[]> = {
+  few: [
+    { bearing: 40, distanceKm: 1, name: '寄り道ポイントA' },
+    { bearing: -30, distanceKm: 1, name: '寄り道ポイントB' },
+  ],
+  normal: [
+    { bearing: 40, distanceKm: 0.9, name: '寄り道ポイントA' },
+    { bearing: -30, distanceKm: 0.9, name: '寄り道ポイントB' },
+    { bearing: 90, distanceKm: 0.9, name: '寄り道ポイントC' },
+  ],
+  many: [
+    { bearing: 60, distanceKm: 0.8, name: '寄り道スポットA' },
+    { bearing: -20, distanceKm: 0.8, name: '寄り道スポットB' },
+    { bearing: 80, distanceKm: 0.8, name: '寄り道スポットC' },
+    { bearing: -40, distanceKm: 0.8, name: '寄り道スポットD' },
+  ],
 };
 
-const ROUTE_ARCHETYPES: RouteArchetype[] = [
-  {
+const SHORT_LEGS: RouteLeg[] = [{ bearing: 85, distanceKm: 1, name: '立ち寄りスポット' }];
+const EASYGOING_LEGS: RouteLeg[] = [{ bearing: 100, distanceKm: 0.6, name: 'のんびりスポット' }];
+
+/** 選んだ「今日の気分」の1つ目を代表スポット名に反映する。未選択時は汎用の名前を使う。 */
+function primarySpotName(moods: Mood[]): string {
+  const primary = moods[0];
+  return primary ? MOOD_SPOT_NAME[primary] : DEFAULT_SPOT_NAME;
+}
+
+/** 選んだ気分をタグへ変換する。重複や既に使ったタグ(exclude)は除き、最大2件まで。 */
+function extraMoodTags(moods: Mood[], exclude: Mood[]): string[] {
+  const tags: string[] = [];
+  for (const mood of moods) {
+    if (exclude.includes(mood)) {
+      continue;
+    }
+    const label = MOOD_LABELS[mood];
+    if (!tags.includes(label)) {
+      tags.push(label);
+    }
+    if (tags.length >= 2) {
+      break;
+    }
+  }
+  return tags;
+}
+
+/** 「のんびり」を選んでいれば控えめに、「短時間」を選んでいれば速めにペースを調整する。 */
+function paceAdjustedSpeedKmH(baseSpeedKmH: number, moods: Mood[]): number {
+  const delta = (moods.includes('leisurely') ? -4 : 0) + (moods.includes('short') ? 4 : 0);
+  return Math.max(12, baseSpeedKmH + delta);
+}
+
+/**
+ * 「今日の気分」「寄り道の量」から、地図上で違いが分かる3ルート分の設計図を組み立てる。
+ * 3案の役割(景色重視/バランス/3案目)は固定し、中身(速さ・寄り道の数・文言)を
+ * 選んだ条件に応じて変える。
+ */
+function buildArchetypes(conditions: DriveConditions): RouteArchetype[] {
+  const { moods, detourLevel } = conditions;
+  const spotName = primarySpotName(moods);
+  const sharedBudgetUsage = DETOUR_LEVEL_BUDGET_USAGE[detourLevel];
+
+  const scenic: RouteArchetype = {
     id: 'scenic',
     name: '景色重視ルート',
-    description: () => '遠回りでも、道中の景色を楽しめることを優先したルートです。',
-    highlight: (mood) => `${MOOD_SPOT_NAME[mood]}を通る、見晴らしの良い道を選びました。`,
-    tags: (mood) => ['景色重視', MOOD_SPOT_NAME[mood]],
-    averageSpeedKmH: 25,
-    legs: [
-      { bearing: 25, distanceKm: 1, name: '眺めの良い道' },
-      { bearing: 70, distanceKm: 1, name: '景色ポイント' },
-      { bearing: 130, distanceKm: 1, name: '展望スポット' },
-    ],
-  },
-  {
-    id: 'detour',
-    name: '寄り道重視ルート',
-    description: () => '気になる場所に立ち寄りながら進む、寄り道多めのルートです。',
-    highlight: (mood) => `${MOOD_SPOT_NAME[mood]}を含む、寄り道スポットを多めに配置しました。`,
-    tags: (mood) => ['寄り道重視', MOOD_SPOT_NAME[mood]],
-    averageSpeedKmH: 20,
-    legs: [
-      { bearing: 60, distanceKm: 0.8, name: '寄り道スポットA' },
-      { bearing: -20, distanceKm: 0.8, name: '寄り道スポットB' },
-      { bearing: 80, distanceKm: 0.8, name: '寄り道スポットC' },
-      { bearing: -40, distanceKm: 0.8, name: '寄り道スポットD' },
-    ],
-  },
-  {
-    id: 'short',
-    name: '短時間ルート',
-    description: () => '無理なく戻れることを優先した、短時間で回れるルートです。',
-    highlight: () => '移動時間を抑えつつ、要所だけを効率よく回れます。',
-    tags: () => ['短時間', '効率重視'],
-    averageSpeedKmH: 35,
-    legs: [{ bearing: 85, distanceKm: 1, name: '立ち寄りスポット' }],
-  },
-];
+    description: '遠回りでも、道中の景色を楽しめることを優先したルートです。',
+    highlight: `${spotName}を通る、見晴らしの良い道を選びました。`,
+    tags: ['景色重視', ...extraMoodTags(moods, ['scenic'])],
+    audience: '景色を眺めながらゆったり走りたい人向け',
+    averageSpeedKmH: paceAdjustedSpeedKmH(25, moods),
+    legs: SCENIC_LEGS,
+    budgetUsageRatio: sharedBudgetUsage,
+  };
+
+  const balanced: RouteArchetype = {
+    id: 'balanced',
+    name: 'バランスルート',
+    description: '景色・寄り道・移動時間のバランスを取った、迷ったときに選びやすいルートです。',
+    highlight: `${spotName}も含め、寄り道と移動時間のバランスを取りました。`,
+    tags: ['バランス', ...extraMoodTags(moods, [])],
+    audience: '欲張らずバランスよく楽しみたい人向け',
+    averageSpeedKmH: paceAdjustedSpeedKmH(27, moods),
+    legs: BALANCED_LEG_PATTERNS[detourLevel],
+    budgetUsageRatio: sharedBudgetUsage,
+  };
+
+  const thirdSlot: RouteArchetype = moods.includes('short')
+    ? {
+        id: 'short',
+        name: '短時間ルート',
+        description: '無理なく戻れることを優先した、短時間で回れるルートです。',
+        highlight: '移動時間を抑えつつ、要所だけを効率よく回れます。',
+        tags: ['短時間', '効率重視'],
+        audience: 'とにかく時間をかけずに戻りたい人向け',
+        averageSpeedKmH: 35,
+        legs: SHORT_LEGS,
+        budgetUsageRatio: 0.6,
+      }
+    : {
+        id: 'easygoing',
+        name: 'のんびりルート',
+        description: '急がず、ゆったりとしたペースで走ることを優先したルートです。',
+        highlight: `${spotName}の近くを、のんびりしたペースで走ります。`,
+        tags: ['のんびり', ...extraMoodTags(moods, ['leisurely'])],
+        audience: '急がずゆったり過ごしたい人向け',
+        averageSpeedKmH: 18,
+        legs: EASYGOING_LEGS,
+        budgetUsageRatio: 0.9,
+      };
+
+  return [scenic, balanced, thirdSlot];
+}
 
 function effectiveTimeBudgetMinutes(params: RouteSearchParams, now = new Date()): number {
   const result = resolveEffectiveTimeBudget(params.conditions, now);
@@ -180,14 +266,14 @@ function buildRoute(
   archetype: RouteArchetype,
   params: RouteSearchParams
 ): RouteOption {
-  const { departure, conditions } = params;
+  const { departure } = params;
   if (!isValidCoordinates(departure.coordinates)) {
     throw new RoutePlanningError('出発地点を確認できませんでした。出発地点を選び直してください。');
   }
   const effectiveBudget = effectiveTimeBudgetMinutes(params);
   const routeBudget = Math.max(
     MIN_ROUTE_BUDGET_MINUTES,
-    Math.floor(effectiveBudget * DETOUR_LEVEL_BUDGET_USAGE[conditions.detourLevel])
+    Math.floor(effectiveBudget * archetype.budgetUsageRatio)
   );
   const maximumDistanceKm = (archetype.averageSpeedKmH * routeBudget) / 60;
 
@@ -213,23 +299,25 @@ function buildRoute(
   return {
     id: archetype.id,
     name: archetype.name,
-    description: archetype.description(conditions.mood),
+    description: archetype.description,
     distanceKm: Math.round(geometry.distanceKm * 10) / 10,
     durationMinutes: geometry.durationMinutes,
-    tags: archetype.tags(conditions.mood),
+    tags: archetype.tags,
     waypoints: geometry.waypoints,
     path: geometry.path,
-    highlight: archetype.highlight(conditions.mood),
+    highlight: archetype.highlight,
+    audience: archetype.audience,
   };
 }
 
 /**
  * 開発中に利用するモックのルート提案プロバイダー。
- * 出発地点とドライブ条件から、地図上で違いが分かる3ルート分の
- * ダミー座標を生成する。実際の道路形状とは一致しない。
+ * 出発地点とドライブ条件(今日の気分・寄り道の量など)から、地図上・体感で
+ * 違いが分かる3ルート分のダミー座標を生成する。実際の道路形状とは一致しない。
  */
 export class MockRouteProvider implements RouteProvider {
   async getRoutes(params: RouteSearchParams): Promise<RouteOption[]> {
-    return ROUTE_ARCHETYPES.map((archetype) => buildRoute(archetype, params));
+    const archetypes = buildArchetypes(params.conditions);
+    return archetypes.map((archetype) => buildRoute(archetype, params));
   }
 }

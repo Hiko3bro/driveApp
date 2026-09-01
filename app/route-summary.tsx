@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
+import { summarizeDriveConditions } from '@/types/drive';
 import type { RouteOption } from '@/types/route';
 
 function resolveRoute(routes: RouteOption[], selectedRouteId: string | null): RouteOption | null {
@@ -66,6 +67,7 @@ export default function RouteSummaryScreen() {
         <Text style={styles.meta}>
           {route.distanceKm}km ・ 約{route.durationMinutes}分
         </Text>
+        <Text style={styles.conditionSummary}>今日の気分: {summarizeDriveConditions(conditions)}</Text>
 
         <View style={styles.tagRow}>
           {route.tags.map((tag) => (
@@ -79,6 +81,7 @@ export default function RouteSummaryScreen() {
           <Text style={styles.sectionTitle}>ルートの特徴</Text>
           <Text style={styles.description}>{route.description}</Text>
           <Text style={styles.highlight}>{route.highlight}</Text>
+          <Text style={styles.audience}>{route.audience}</Text>
         </View>
 
         <View style={styles.noticeBox}>
@@ -135,7 +138,13 @@ const styles = StyleSheet.create({
   meta: {
     fontSize: 14,
     color: '#5b6770',
-    marginBottom: 12,
+    marginBottom: 4,
+  },
+  conditionSummary: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5b6770',
+    marginBottom: 16,
   },
   tagRow: {
     flexDirection: 'row',
@@ -173,6 +182,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#0a7ea4',
     fontWeight: '600',
+    marginBottom: 6,
+  },
+  audience: {
+    fontSize: 12,
+    color: '#8b959c',
   },
   noticeBox: {
     borderRadius: 12,

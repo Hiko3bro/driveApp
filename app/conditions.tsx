@@ -9,9 +9,10 @@ import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { getRouteProvider, RoutePlanningError } from '@/services/route';
 import {
   AVAILABLE_TIME_LABELS,
-  DETOUR_LEVEL_LABELS,
+  MAX_SELECTED_MOODS,
   MOOD_LABELS,
   RETURN_TARGET_LABELS,
+  formatMinutesLabel,
   type AvailableTime,
   type DetourLevel,
   type DriveConditions,
@@ -22,17 +23,29 @@ import {
 const AVAILABLE_TIME_OPTIONS = Object.keys(AVAILABLE_TIME_LABELS) as AvailableTime[];
 const MOOD_OPTIONS = Object.keys(MOOD_LABELS) as Mood[];
 const RETURN_TARGET_OPTIONS = Object.keys(RETURN_TARGET_LABELS) as ReturnTarget[];
-const DETOUR_LEVEL_OPTIONS = Object.keys(DETOUR_LEVEL_LABELS) as DetourLevel[];
 const RETURN_DEADLINE_OPTIONS = ['指定なし', '17:00', '18:00', '19:00', '20:00', '21:00'];
+const CUSTOM_MINUTE_OPTIONS = [30, 45, 90, 150, 240, 300];
+
+/** 「今日の気分」から、既存の寄り道量ロジック(DetourLevel)へ変換する。 */
+function deriveDetourLevel(moods: Mood[]): DetourLevel {
+  if (moods.includes('detourRich')) {
+    return 'many';
+  }
+  if (moods.includes('short')) {
+    return 'few';
+  }
+  return 'normal';
+}
 
 export default function ConditionsScreen() {
   const { departure, setConditions, setRoutes } = useDriveFlow();
 
+  const [moods, setMoods] = useState<Mood[]>([]);
+  const [moodNotice, setMoodNotice] = useState<string | null>(null);
   const [availableTime, setAvailableTime] = useState<AvailableTime>('2h');
-  const [mood, setMood] = useState<Mood>('omakase');
+  const [customMinutes, setCustomMinutes] = useState<number>(90);
   const [returnTarget, setReturnTarget] = useState<ReturnTarget>('same-as-departure');
   const [returnDeadline, setReturnDeadline] = useState<string>('指定なし');
-  const [detourLevel, setDetourLevel] = useState<DetourLevel>('normal');
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
 
@@ -52,13 +65,27 @@ export default function ConditionsScreen() {
     );
   }
 
+  const handleToggleMood = (mood: Mood) => {
+    setMoodNotice(null);
+    if (moods.includes(mood)) {
+      setMoods(moods.filter((value) => value !== mood));
+      return;
+    }
+    if (moods.length >= MAX_SELECTED_MOODS) {
+      setMoodNotice(`今日の気分は最大${MAX_SELECTED_MOODS}つまで選べます。`);
+      return;
+    }
+    setMoods([...moods, mood]);
+  };
+
   const handleSubmit = async () => {
     const conditions: DriveConditions = {
       availableTime,
-      mood,
+      customAvailableMinutes: availableTime === 'custom' ? customMinutes : undefined,
+      moods,
       returnTarget,
       returnDeadline: returnDeadline === '指定なし' ? undefined : returnDeadline,
-      detourLevel,
+      detourLevel: deriveDetourLevel(moods),
     };
 
     setSubmitting(true);
@@ -69,7 +96,7 @@ export default function ConditionsScreen() {
       const provider = getRouteProvider();
       const routes = await provider.getRoutes({ departure, conditions });
       if (routes.length === 0) {
-        throw new RoutePlanningError('選択した条件ではルートを作れません。条件を変更してください。');
+        throw new RoutePlanningError('選んだ条件ではルートを作れません。条件を変更してください。');
       }
       setRoutes(routes);
       router.push('/route-compare');
@@ -88,9 +115,24 @@ export default function ConditionsScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.heading}>今日はどんなドライブにする?</Text>
         <Text style={styles.departureLabel}>出発地点: {departure.label}</Text>
 
-        <Section title="使える時間">
+        <Section title="今日の気分" subtitle="気になるものだけ選んでください(選ばなくてもOK)">
+          <ChipRow>
+            {MOOD_OPTIONS.map((value) => (
+              <OptionChip
+                key={value}
+                label={MOOD_LABELS[value]}
+                selected={moods.includes(value)}
+                onPress={() => handleToggleMood(value)}
+              />
+            ))}
+          </ChipRow>
+          {moodNotice && <Text style={styles.noticeText}>{moodNotice}</Text>}
+        </Section>
+
+        <Section title="どれくらい走る?">
           <ChipRow>
             {AVAILABLE_TIME_OPTIONS.map((value) => (
               <OptionChip
@@ -101,22 +143,21 @@ export default function ConditionsScreen() {
               />
             ))}
           </ChipRow>
+          {availableTime === 'custom' && (
+            <ChipRow>
+              {CUSTOM_MINUTE_OPTIONS.map((minutes) => (
+                <OptionChip
+                  key={minutes}
+                  label={formatMinutesLabel(minutes)}
+                  selected={customMinutes === minutes}
+                  onPress={() => setCustomMinutes(minutes)}
+                />
+              ))}
+            </ChipRow>
+          )}
         </Section>
 
-        <Section title="気分">
-          <ChipRow>
-            {MOOD_OPTIONS.map((value) => (
-              <OptionChip
-                key={value}
-                label={MOOD_LABELS[value]}
-                selected={mood === value}
-                onPress={() => setMood(value)}
-              />
-            ))}
-          </ChipRow>
-        </Section>
-
-        <Section title="帰着地点">
+        <Section title="戻り方">
           <ChipRow>
             {RETURN_TARGET_OPTIONS.map((value) => (
               <OptionChip
@@ -129,7 +170,7 @@ export default function ConditionsScreen() {
           </ChipRow>
         </Section>
 
-        <Section title="帰着時刻(目安)">
+        <Section title="何時ごろ戻る?">
           <ChipRow>
             {RETURN_DEADLINE_OPTIONS.map((value) => (
               <OptionChip
@@ -142,22 +183,9 @@ export default function ConditionsScreen() {
           </ChipRow>
         </Section>
 
-        <Section title="寄り道">
-          <ChipRow>
-            {DETOUR_LEVEL_OPTIONS.map((value) => (
-              <OptionChip
-                key={value}
-                label={DETOUR_LEVEL_LABELS[value]}
-                selected={detourLevel === value}
-                onPress={() => setDetourLevel(value)}
-              />
-            ))}
-          </ChipRow>
-        </Section>
-
         {submissionError && <Text style={styles.errorText}>{submissionError}</Text>}
         <PrimaryButton
-          label={submitting ? 'ルートを探しています…' : 'ルートを提案してもらう'}
+          label={submitting ? 'ルートを探しています…' : '今日のルートを見つける'}
           onPress={handleSubmit}
           disabled={submitting}
           style={styles.submitButton}
@@ -167,10 +195,19 @@ export default function ConditionsScreen() {
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
+      {subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
       {children}
     </View>
   );
@@ -195,10 +232,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  heading: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#11181C',
+    marginBottom: 6,
+  },
   departureLabel: {
     fontSize: 14,
     color: '#5b6770',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   section: {
     marginBottom: 20,
@@ -207,6 +250,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#11181C',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: '#8b959c',
     marginBottom: 10,
   },
   chipRow: {
@@ -215,6 +263,13 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: 12,
+  },
+  noticeText: {
+    color: '#7a5b18',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: -4,
+    marginBottom: 8,
   },
   errorText: {
     color: '#c0392b',
