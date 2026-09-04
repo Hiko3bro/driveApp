@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DriveMapView, type DriveMapViewHandle } from '@/components/map/drive-map-view';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { SelectionCard } from '@/components/ui/selection-card';
+import { WizardProgressHeader } from '@/components/ui/wizard-progress-header';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION, isValidCoordinates } from '@/services/location/coordinates';
 import { requestCurrentLocation } from '@/services/location/current-location';
@@ -304,6 +305,7 @@ export default function DepartureScreen() {
   if (mode === 'locating') {
     return (
       <SafeAreaView style={styles.safeArea}>
+        <WizardProgressHeader step={1} total={7} />
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color="#0a7ea4" />
           <Text style={styles.statusText}>現在地を取得しています…</Text>
@@ -315,6 +317,7 @@ export default function DepartureScreen() {
   if (mode === 'location-denied') {
     return (
       <SafeAreaView style={styles.safeArea}>
+        <WizardProgressHeader step={1} total={7} />
         <View style={styles.centerContent}>
           <Text style={styles.statusTitle}>現在地を利用できませんでした</Text>
           <Text style={styles.statusText}>
@@ -350,6 +353,7 @@ export default function DepartureScreen() {
             : 'この場所に決定';
     return (
       <SafeAreaView style={styles.safeArea}>
+        <WizardProgressHeader step={1} total={7} />
         <View style={styles.pickHeader}>
           <Text style={styles.statusTitle}>
             {isHomeMode ? '自宅の場所を登録' : '出発地点を指定'}
@@ -386,6 +390,7 @@ export default function DepartureScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <WizardProgressHeader step={1} total={7} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>出発地点を選んでください</Text>
         <SelectionCard

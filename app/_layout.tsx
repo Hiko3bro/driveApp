@@ -15,7 +15,7 @@ export default function RootLayout() {
         <Stack>
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="departure" options={{ title: '出発地点を選ぶ' }} />
-          <Stack.Screen name="conditions" options={{ title: 'ドライブ条件を入力' }} />
+          <Stack.Screen name="conditions" options={{ headerShown: false }} />
           <Stack.Screen name="route-compare" options={{ title: 'ルートを比較する' }} />
           <Stack.Screen name="route-summary" options={{ title: 'ルート決定' }} />
           <Stack.Screen name="spot-discovery" options={{ title: '周辺スポットを探す' }} />

@@ -6,7 +6,7 @@ import {
 import { resolveEffectiveTimeBudget } from '@/services/route/time-budget';
 import { isValidCoordinates, normalizeGeneratedCoordinates } from '@/services/location/coordinates';
 import { MOOD_LABELS, type DetourLevel, type DriveConditions, type Mood } from '@/types/drive';
-import type { Coordinates } from '@/types/location';
+import type { Coordinates, ViaPoint } from '@/types/location';
 import type { RouteOption, RouteWaypoint } from '@/types/route';
 
 const EARTH_RADIUS_KM = 6371;
@@ -97,8 +97,8 @@ const MOOD_SPOT_NAME: Record<Mood, string> = {
   nightDrive: '夜景スポット',
   leisurely: 'のんびり過ごせる休憩処',
   detourRich: '気になる寄り道スポット',
-  short: '効率よく回れる立ち寄り地',
-  homeFocused: '帰り道に寄れるスポット',
+  driveFocused: '走りごたえのある道',
+  omakase: 'おすすめスポット',
 };
 const DEFAULT_SPOT_NAME = '気になるスポット';
 
@@ -126,8 +126,19 @@ const BALANCED_LEG_PATTERNS: Record<DetourLevel, RouteLeg[]> = {
   ],
 };
 
-const SHORT_LEGS: RouteLeg[] = [{ bearing: 85, distanceKm: 1, name: '立ち寄りスポット' }];
+const DRIVE_FOCUSED_LEGS: RouteLeg[] = [{ bearing: 85, distanceKm: 1, name: '走りごたえのある区間' }];
 const EASYGOING_LEGS: RouteLeg[] = [{ bearing: 100, distanceKm: 0.6, name: 'のんびりスポット' }];
+
+/** 経由したい場所(先頭1件)を「◯◯経由」のような一言に変換する。ジオメトリ自体は変えない、表示専用の差別化材料。 */
+function viaPointsHighlightSuffix(viaPoints: ViaPoint[]): string {
+  if (viaPoints.length === 0) {
+    return '';
+  }
+  const [first] = viaPoints;
+  return viaPoints.length > 1
+    ? ` ${first.label}など、経由したい場所にも寄れるよう考えています。`
+    : ` ${first.label}にも寄れるよう考えています。`;
+}
 
 /** 選んだ「今日の気分」の1つ目を代表スポット名に反映する。未選択時は汎用の名前を使う。 */
 function primarySpotName(moods: Mood[]): string {
@@ -153,9 +164,9 @@ function extraMoodTags(moods: Mood[], exclude: Mood[]): string[] {
   return tags;
 }
 
-/** 「のんびり」を選んでいれば控えめに、「短時間」を選んでいれば速めにペースを調整する。 */
+/** 「のんびり」を選んでいれば控えめに、「とにかく走りたい」を選んでいれば速めにペースを調整する。 */
 function paceAdjustedSpeedKmH(baseSpeedKmH: number, moods: Mood[]): number {
-  const delta = (moods.includes('leisurely') ? -4 : 0) + (moods.includes('short') ? 4 : 0);
+  const delta = (moods.includes('leisurely') ? -4 : 0) + (moods.includes('driveFocused') ? 4 : 0);
   return Math.max(12, baseSpeedKmH + delta);
 }
 
@@ -165,15 +176,16 @@ function paceAdjustedSpeedKmH(baseSpeedKmH: number, moods: Mood[]): number {
  * 選んだ条件に応じて変える。
  */
 function buildArchetypes(conditions: DriveConditions): RouteArchetype[] {
-  const { moods, detourLevel } = conditions;
+  const { moods, detourLevel, viaPoints } = conditions;
   const spotName = primarySpotName(moods);
   const sharedBudgetUsage = DETOUR_LEVEL_BUDGET_USAGE[detourLevel];
+  const viaSuffix = viaPointsHighlightSuffix(viaPoints);
 
   const scenic: RouteArchetype = {
     id: 'scenic',
     name: '景色重視ルート',
     description: '遠回りでも、道中の景色を楽しめることを優先したルートです。',
-    highlight: `${spotName}を通る、見晴らしの良い道を選びました。`,
+    highlight: `${spotName}を通る、見晴らしの良い道を選びました。${viaSuffix}`,
     tags: ['景色重視', ...extraMoodTags(moods, ['scenic'])],
     audience: '景色を眺めながらゆったり走りたい人向け',
     averageSpeedKmH: paceAdjustedSpeedKmH(25, moods),
@@ -185,7 +197,7 @@ function buildArchetypes(conditions: DriveConditions): RouteArchetype[] {
     id: 'balanced',
     name: 'バランスルート',
     description: '景色・寄り道・移動時間のバランスを取った、迷ったときに選びやすいルートです。',
-    highlight: `${spotName}も含め、寄り道と移動時間のバランスを取りました。`,
+    highlight: `${spotName}も含め、寄り道と移動時間のバランスを取りました。${viaSuffix}`,
     tags: ['バランス', ...extraMoodTags(moods, [])],
     audience: '欲張らずバランスよく楽しみたい人向け',
     averageSpeedKmH: paceAdjustedSpeedKmH(27, moods),
@@ -193,23 +205,23 @@ function buildArchetypes(conditions: DriveConditions): RouteArchetype[] {
     budgetUsageRatio: sharedBudgetUsage,
   };
 
-  const thirdSlot: RouteArchetype = moods.includes('short')
+  const thirdSlot: RouteArchetype = moods.includes('driveFocused')
     ? {
-        id: 'short',
-        name: '短時間ルート',
-        description: '無理なく戻れることを優先した、短時間で回れるルートです。',
-        highlight: '移動時間を抑えつつ、要所だけを効率よく回れます。',
-        tags: ['短時間', '効率重視'],
-        audience: 'とにかく時間をかけずに戻りたい人向け',
-        averageSpeedKmH: 35,
-        legs: SHORT_LEGS,
-        budgetUsageRatio: 0.6,
+        id: 'drive-focused',
+        name: 'たっぷり走るルート',
+        description: '寄り道は控えめに、走ること自体をしっかり楽しめるルートです。',
+        highlight: `走りごたえのある道を選び、ドライブの時間そのものを長く取りました。${viaSuffix}`,
+        tags: ['走行重視', '効率よく移動'],
+        audience: 'とにかくたくさん走りたい人向け',
+        averageSpeedKmH: 32,
+        legs: DRIVE_FOCUSED_LEGS,
+        budgetUsageRatio: 0.95,
       }
     : {
         id: 'easygoing',
         name: 'のんびりルート',
         description: '急がず、ゆったりとしたペースで走ることを優先したルートです。',
-        highlight: `${spotName}の近くを、のんびりしたペースで走ります。`,
+        highlight: `${spotName}の近くを、のんびりしたペースで走ります。${viaSuffix}`,
         tags: ['のんびり', ...extraMoodTags(moods, ['leisurely'])],
         audience: '急がずゆったり過ごしたい人向け',
         averageSpeedKmH: 18,
@@ -247,6 +259,10 @@ function createGeometry(
 
   if (conditions.returnTarget === 'same-as-departure') {
     path.push(departure.coordinates);
+  } else if (conditions.finalDestination && isValidCoordinates(conditions.finalDestination.coordinates)) {
+    const destination = conditions.finalDestination.coordinates;
+    waypoints.push({ name: conditions.finalDestination.label, coordinates: destination });
+    path.push(destination);
   } else {
     const destination = offsetCoordinate(current, 0, 0.5 * legScaleKm);
     waypoints.push({ name: '到着地点', coordinates: destination });

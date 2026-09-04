@@ -21,6 +21,56 @@
 
 ---
 
+## 2026-09-03
+
+`feature/drive-planning-wizard` ブランチ(`feature/route-condition-improvements`からの派生)で、ドライブ条件入力を1画面フォームから多段階ウィザードへ全面的に再設計した(commit・pushは未実施)。
+
+### 完了したこと
+
+- `types/location.ts`: `PlaceSource`・`PlaceSelection`・`ViaPoint`・`SavedPlace`・`RecentPlace`型を新規追加した
+- `types/drive.ts`: `Mood`を`short`/`homeFocused`→`driveFocused`(とにかく走りたい)/`omakase`(おまかせ)に差し替え、`AvailableTime`に`day`(1日)/`unspecified`(指定なし)を追加。`DriveConditions`に`finalDestination`・`viaPoints`・`aiNote`を追加し、`returnDeadline`の形式を`"HH:mm"`からISO 8601へ変更した。`deriveDetourLevel`を`app/conditions.tsx`からこのファイルへ移動してexportし、`short`分岐の削除に伴い`detourRich→many`、それ以外`normal`へ単純化。`summarizeDriveConditions()`をISO日時の整形・`finalDestination`/`viaPoints`の反映に対応させた。`formatMinutesLabel()`を日単位にも対応させた
+- `services/route/time-budget.ts`: `resolveNextDeadline`(HH:mm前提の翌日ロールオーバー)を削除し、ISO 8601文字列を`new Date(iso)`で直接パースする実装に置き換えた。`resolveAvailableMinutes`に`day`(1440分)・`unspecified`(暫定的に2時間相当へフォールバック)を追加。ISO化により「帰着日時はすでに過ぎている」判定は意味のあるチェックとして復活させた(詳細は`docs/DECISIONS.md`)
+- `services/route/mock-route-provider.ts`: `MOOD_SPOT_NAME`・`paceAdjustedSpeedKmH`・3つ目アーキタイプの分岐条件を新しいMood値(`driveFocused`)に合わせて更新(「短時間ルート」→「たっぷり走るルート」)。`createGeometry`が`conditions.finalDestination`(実際に地図で選んだ目的地)を優先して使うよう対応(未設定時は従来の合成オフセット地点にフォールバック)。`conditions.viaPoints`の先頭1件を各ルートの`highlight`文言に反映する`viaPointsHighlightSuffix()`を追加
+- `services/location/saved-places-store.ts`・`services/location/recent-places-store.ts`を新規追加。`home-location-store.ts`と同じパターン(expo-secure-store、JSON配列、モジュールキー`drive-discovery.saved-places`/`drive-discovery.recent-places`)で実装
+- `components/ui/wizard-progress-header.tsx`を新規追加(「X / 7」+ドットバー+任意の「戻る」リンク)
+- `components/location/map-point-picker.tsx`を新規追加。`app/departure.tsx`の中心ピン方式ピッカーと同じ考え方を独立コンポーネントとして実装(departure.tsx自体は無改修)
+- `app/conditions.tsx`を全面書き換え。1ファイル内の`useState<StepId>`によるステップ・マシンとして、気分(2/7)→どれくらい走る?(3/7)→最後はどこにする?(4/7)→経由したい場所はある?(5/7)→何時ごろ戻る?(6/7)→AIに追加で伝えたいこと(7/7)→条件確認→あなたに合うドライブを考えています、の順で実装した
+  - 「今日の気分」: 「おまかせ」選択で他を解除、他選択で「おまかせ」を解除する排他ロジックを追加
+  - 「どれくらい走る?」: 日/時間/分の数字入力(`NumberField`)、合計15分未満は「次へ」を無効化してブロック(警告だけで進める挙動にはしていない)
+  - 「最後はどこにする?」: 「別の場所」選択時に`MapPointPicker`を開き、確定した座標を`finalDestination`として保持
+  - 「経由したい場所はある?」: 地図(`MapPointPicker`)/保存済み場所/最近使った場所の3通りで追加。地図で選んだ場所は名前入力画面(`overlay: 'via-name'`)を経由し、任意で`saved-places-store`に保存。追加のたびに`recent-places-store`に記録
+  - 「何時ごろ戻る?」: 日付チップ(今日/明日/明後日/日付を指定)+時・分の数字入力から、`toIsoWithOffset()`でタイムゾーンオフセット付きISO 8601文字列を組み立てる自前実装(新規パッケージなし)。プレビューで、現在より過去になる場合は非ブロッキングの案内を表示
+  - 「AIに追加で伝えたいこと」: `KeyboardAvoidingView`(iOSは`behavior="padding"`)+`ScrollView`(`keyboardShouldPersistTaps="handled"`)で、キーボード表示時も入力欄・ボタンが隠れないようにした
+  - 「条件確認」: 各項目に「変更」リンクを設け、押すと該当ステップへジャンプ(`jumpedFromConfirmRef`で「次へ」を押すと確認画面へ戻るよう制御)。入力済みの内容は消えない
+  - 「あなたに合うドライブを考えています」: `THINKING_MESSAGES`を順番に表示する固定時間のモック待機のあと、既存の`getRouteProvider().getRoutes()`を呼び出す(将来AI APIへ差し替えやすいよう、この待機とルート取得を1つの`handleSubmit`にまとめている)
+  - `useDriveFlow()`の`conditions`が既に存在する場合(ルート比較画面の「条件を変える」から来た場合)は、ステップ機械の初期値を`'confirm'`にして、いきなり条件確認から始まるようにした
+- `app/departure.tsx`: 内部ロジックは無改修のまま、全ての表示分岐(menu/locating/location-denied/home-register/custom-pick)の先頭に`<WizardProgressHeader step={1} total={7} />`を追加
+- `app/route-compare.tsx`: フッターに「条件を変える」ボタンを追加(`router.push('/conditions')`のみ、既存の条件は保持されたまま)
+- `app/_layout.tsx`: `conditions`ルートのみ`headerShown: false`に変更(独自の進捗ヘッダーに置き換えるため)。`departure`はネイティブヘッダー(戻る導線)を維持
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- `CI=1 npx expo start --web --port 8083`: Web向けバンドルがエラーなく完了(1138モジュール、既知の`shadow*`非推奨警告のみ)することを確認
+- `DriveConditions`のフィールドへ実際に触れているファイル(`app/conditions.tsx`・`types/drive.ts`・`services/route/time-budget.ts`・`services/route/mock-route-provider.ts`)以外の画面(`route-compare.tsx`・`route-summary.tsx`・`spot-discovery.tsx`・`route-plan.tsx`・`services/spot/spot-route-plan.ts`)にコード変更が不要だったことを、型チェックが通ることと合わせて確認
+- `app/departure.tsx`の内部ロジック(SecureStore呼び出し・地図ピッカーの状態機械)に差分がないことをdiffで確認
+
+### 未完了
+
+- 実機(iOS Expo Go)での通し確認: ウィザードの7ステップ、経由したい場所の保存済み/最近使った場所、帰着日時の日付またぎ、条件確認からの部分編集、「条件を変える」、あなたに合うドライブを考えています演出、既存のルート比較以降のフロー
+- 「経由したい場所」を実際のルート形状(ポリライン)へ反映する処理は未着手(表示上の差別化のみ)
+- 「保存済み場所」の一覧・編集・削除を行う専用画面は未着手
+- 「最後はどこにする?」「経由したい場所」の検索(住所からの場所検索)は未着手
+- 本物のAI API接続は未着手(演出は固定時間のモック待機)
+
+### 次にやること
+
+- 実機(iOS Expo Go)で上記の一連の操作を確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+
+---
+
 ## 2026-09-01(4)
 
 `feature/route-condition-improvements` ブランチ(`feature/spot-discovery-improvements`からの派生)で、ルート提案時の条件入力を「単なるナビ条件」から「今日どんなドライブがしたいか」を選べる体験へ改善した(commit・pushは未実施)。

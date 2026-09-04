@@ -214,6 +214,12 @@ export default function RouteCompareScreen() {
           onPress={handleDecide}
           disabled={isNavigatingToSummary}
         />
+        <PrimaryButton
+          label="条件を変える"
+          variant="secondary"
+          onPress={() => router.push('/conditions')}
+          style={styles.changeConditionsButton}
+        />
       </View>
     </SafeAreaView>
   );
@@ -349,5 +355,9 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     paddingTop: 8,
+    gap: 10,
+  },
+  changeConditionsButton: {
+    marginTop: 0,
   },
 });
