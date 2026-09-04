@@ -4,8 +4,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { SelectionCard } from '@/components/ui/selection-card';
+import { useDriveFlow } from '@/contexts/drive-flow-context';
 
 export default function HomeScreen() {
+  const { resetPlanningSession } = useDriveFlow();
+
+  const handleStartNewDrive = () => {
+    // 前回のドライブで入力した条件・提案ルートが残ったまま条件確認画面へ
+    // 飛んでしまわないよう、新規開始の入口では必ず計画状態をリセットしてから進む。
+    resetPlanningSession();
+    router.push('/departure');
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -22,7 +32,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.actions}>
-          <PrimaryButton label="今からドライブ" onPress={() => router.push('/departure')} />
+          <PrimaryButton label="今からドライブ" onPress={handleStartNewDrive} />
 
           <SelectionCard
             title="旅行先で探す"

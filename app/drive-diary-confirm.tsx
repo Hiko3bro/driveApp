@@ -16,7 +16,7 @@ export default function DriveDiaryConfirmScreen() {
 
   useEffect(() => {
     if (!entry) {
-      router.replace('/');
+      router.dismissTo('/');
     }
   }, [entry]);
 
@@ -88,7 +88,7 @@ export default function DriveDiaryConfirmScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton label="共有する" onPress={() => router.push('/drive-diary-share')} />
-        <PrimaryButton label="ホームに戻る" variant="secondary" onPress={() => router.replace('/')} />
+        <PrimaryButton label="ホームに戻る" variant="secondary" onPress={() => router.dismissTo('/')} />
       </View>
     </SafeAreaView>
   );

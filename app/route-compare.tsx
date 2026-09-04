@@ -1,4 +1,4 @@
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from 'expo-router/react-navigation';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -41,7 +41,8 @@ function resolveSelectedIndex(routes: RouteOption[], selectedRouteId: string | n
 }
 
 export default function RouteCompareScreen() {
-  const { departure, conditions, routes, selectedRouteId, setSelectedRouteId } = useDriveFlow();
+  const { departure, conditions, routes, selectedRouteId, setSelectedRouteId, beginConditionsEdit } =
+    useDriveFlow();
 
   const scrollRef = useRef<ScrollView>(null);
   const mapRef = useRef<DriveMapViewHandle>(null);
@@ -149,7 +150,13 @@ export default function RouteCompareScreen() {
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>提案できるルートがありませんでした</Text>
           <Text style={styles.emptyText}>条件を変えて、もう一度ルートを探してみてください。</Text>
-          <PrimaryButton label="条件を入力しなおす" onPress={() => router.replace('/conditions')} />
+          <PrimaryButton
+            label="条件を入力しなおす"
+            onPress={() => {
+              beginConditionsEdit();
+              router.push('/conditions');
+            }}
+          />
         </View>
       </SafeAreaView>
     );
@@ -217,7 +224,11 @@ export default function RouteCompareScreen() {
         <PrimaryButton
           label="条件を変える"
           variant="secondary"
-          onPress={() => router.push('/conditions')}
+          onPress={() => {
+            // 既存のDriveConditionsは変更せず、「編集で入った」ことだけを明示する。
+            beginConditionsEdit();
+            router.push('/conditions');
+          }}
           style={styles.changeConditionsButton}
         />
       </View>

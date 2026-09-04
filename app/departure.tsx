@@ -1,4 +1,4 @@
-import { useFocusEffect, usePreventRemove } from '@react-navigation/native';
+import { useFocusEffect, usePreventRemove } from 'expo-router/react-navigation';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';

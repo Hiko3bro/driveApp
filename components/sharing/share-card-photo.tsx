@@ -57,10 +57,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#1b2733',
   },
   photo: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   photoFallback: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#1b2733',
   },
   routeLayer: {

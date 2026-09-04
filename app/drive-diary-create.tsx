@@ -40,7 +40,7 @@ export default function DriveDiaryCreateScreen() {
 
   useEffect(() => {
     if (!driveRecord) {
-      router.replace('/');
+      router.dismissTo('/');
     }
   }, [driveRecord]);
 

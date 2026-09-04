@@ -30,7 +30,7 @@ export default function DriveDiaryShareScreen() {
 
   useEffect(() => {
     if (!entry) {
-      router.replace('/');
+      router.dismissTo('/');
     }
   }, [entry]);
 

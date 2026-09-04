@@ -197,16 +197,26 @@ function partsFromIso(iso: string | undefined, now: Date) {
 }
 
 export default function ConditionsScreen() {
-  const { departure, conditions: existingConditions, setConditions, setRoutes } = useDriveFlow();
-  const now = useRef(new Date()).current;
-  const initialDeadlineParts = useRef(partsFromIso(existingConditions?.returnDeadline, now)).current;
-  const initialCustomTime = useRef(minutesToParts(existingConditions?.customAvailableMinutes ?? 120)).current;
-  /** route-compareの「条件を変える」から来た(=既存条件がある)場合は、いきなり条件確認から始める。 */
-  const enteredAtConfirmRef = useRef(existingConditions !== null);
+  const {
+    departure,
+    conditions: existingConditions,
+    planningEntryMode,
+    setConditions,
+    setRoutes,
+  } = useDriveFlow();
+  // レンダー中のref.current読み取りを避けるため、1回だけ評価したい初期値は
+  // useRef(...).currentではなく、useStateの遅延初期化(第一要素のみ使用)で作る。
+  const [now] = useState(() => new Date());
+  const [initialDeadlineParts] = useState(() => partsFromIso(existingConditions?.returnDeadline, now));
+  const [initialCustomTime] = useState(() => minutesToParts(existingConditions?.customAvailableMinutes ?? 120));
+  // 「新規開始」か「条件編集」かは、conditionsの有無から推測せず、DriveFlowContextの
+  // planningEntryMode(ホームの「今からドライブ」→resetPlanningSession()で'new'、
+  // ルート比較の「条件を変える」→beginConditionsEdit()で'edit')だけで判別する。
+  const enteredAtConfirmRef = useRef(planningEntryMode === 'edit');
   const jumpedFromConfirmRef = useRef(false);
   const isMountedRef = useRef(true);
 
-  const [step, setStep] = useState<StepId>(existingConditions ? 'confirm' : 'mood');
+  const [step, setStep] = useState<StepId>(planningEntryMode === 'edit' ? 'confirm' : 'mood');
   const [overlay, setOverlay] = useState<Overlay>('none');
 
   const [moods, setMoods] = useState<Mood[]>(existingConditions?.moods ?? []);
@@ -348,7 +358,7 @@ export default function ConditionsScreen() {
     returnDeadlineMode === 'custom'
       ? buildDeadlineDate(now, dateMode, customYearText, customMonthText, customDayText, deadlineHourText, deadlineMinuteText)
       : null;
-  const isDeadlineInPast = previewDeadlineDate ? previewDeadlineDate.getTime() <= Date.now() : false;
+  const isDeadlineInPast = previewDeadlineDate ? previewDeadlineDate.getTime() <= now.getTime() : false;
 
   // --- 経由したい場所 ------------------------------------------------------
   const handleDestinationMapConfirm = (coordinates: Coordinates) => {

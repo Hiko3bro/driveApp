@@ -12,7 +12,7 @@ export default function DriveSummaryScreen() {
 
   useEffect(() => {
     if (!driveRecord) {
-      router.replace('/');
+      router.dismissTo('/');
     }
   }, [driveRecord]);
 
@@ -79,7 +79,7 @@ export default function DriveSummaryScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton label="日記を作成" onPress={() => router.push('/drive-diary-create')} />
-        <PrimaryButton label="ホームに戻る" variant="secondary" onPress={() => router.replace('/')} />
+        <PrimaryButton label="ホームに戻る" variant="secondary" onPress={() => router.dismissTo('/')} />
       </View>
     </SafeAreaView>
   );
