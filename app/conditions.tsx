@@ -18,6 +18,7 @@ import { OptionChip } from '@/components/ui/option-chip';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { WizardProgressHeader } from '@/components/ui/wizard-progress-header';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
+import { requestAiRoutePreferences, shouldRequestAiInterpretation } from '@/services/ai/route-planning-client';
 import { addSavedPlace, getSavedPlaces } from '@/services/location/saved-places-store';
 import { getRecentPlaces, recordRecentPlace } from '@/services/location/recent-places-store';
 import { getRouteProvider, RoutePlanningError } from '@/services/route';
@@ -75,21 +76,11 @@ const MAX_MINUTE_PART = 59;
 /** これ未満だと十分なルートを提案できないため、次へ進めずブロックする。 */
 const MIN_CUSTOM_TOTAL_MINUTES = 15;
 
-const THINKING_MESSAGES = [
-  '時間に収まるルートを確認中',
-  '気分に合う道を探しています',
-  '経由したい場所を組み合わせています',
-  '条件に合う3つのプランを作成中',
-];
 /**
- * 現段階では本物のAI APIへは未接続のため、この待機は演出用のモック。
- * 将来AI APIに差し替える際は、この関数の中身だけを実際の呼び出しへ置き換えられるようにしている。
+ * 「考えています」画面の進行状況。実際の非同期処理の完了に合わせて切り替える
+ * (固定時間のタイマーではない)。AIへ問い合わせない場合は最初から'planning'。
  */
-const THINKING_STEP_MS = 550;
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+type ThinkingPhase = 'interpreting' | 'planning';
 
 /** 数字以外の文字を取り除く。 */
 function sanitizeDigits(text: string): string {
@@ -203,6 +194,7 @@ export default function ConditionsScreen() {
     planningEntryMode,
     setConditions,
     setRoutes,
+    setAiInterpretation,
   } = useDriveFlow();
   // レンダー中のref.current読み取りを避けるため、1回だけ評価したい初期値は
   // useRef(...).currentではなく、useStateの遅延初期化(第一要素のみ使用)で作る。
@@ -253,8 +245,11 @@ export default function ConditionsScreen() {
 
   const [aiNote, setAiNote] = useState(existingConditions?.aiNote ?? '');
 
-  const [thinkingIndex, setThinkingIndex] = useState(0);
+  const [thinkingPhase, setThinkingPhase] = useState<ThinkingPhase>('planning');
+  const [thinkingUsesAi, setThinkingUsesAi] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -439,18 +434,45 @@ export default function ConditionsScreen() {
   };
 
   const handleSubmit = async () => {
+    if (submitting) {
+      // 連打による二重リクエスト防止(ボタンはこのstepでは既に非表示になるが、念のため)。
+      return;
+    }
     const nextConditions = buildConditions();
+    const willUseAi = shouldRequestAiInterpretation(nextConditions);
+
     setSubmissionError(null);
-    setThinkingIndex(0);
+    setAiNotice(null);
+    setThinkingUsesAi(willUseAi);
+    setThinkingPhase(willUseAi ? 'interpreting' : 'planning');
+    setSubmitting(true);
     setStep('thinking');
     setConditions(nextConditions);
 
-    const timer = setInterval(() => {
-      setThinkingIndex((index) => Math.min(index + 1, THINKING_MESSAGES.length - 1));
-    }, THINKING_STEP_MS);
-
     try {
-      await wait(THINKING_STEP_MS * THINKING_MESSAGES.length);
+      if (willUseAi) {
+        // AIには構造化条件と自由記述だけを送る(座標・住所・保存場所・GPS履歴は送らない)。
+        // クライアント側では自動リトライしない(サーバー側で既に最大1回リトライ済み)。
+        const outcome = await requestAiRoutePreferences(nextConditions);
+        if (isMountedRef.current) {
+          if (outcome.ok) {
+            setAiInterpretation(outcome.result);
+            if (outcome.result.fallback) {
+              setAiNotice('AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。');
+            }
+          } else {
+            setAiInterpretation(null);
+            setAiNotice('AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。');
+          }
+        }
+      } else {
+        setAiInterpretation(null);
+      }
+
+      if (isMountedRef.current) {
+        setThinkingPhase('planning');
+      }
+
       const provider = getRouteProvider();
       const routeResults = await provider.getRoutes({ departure, conditions: nextConditions });
       if (routeResults.length === 0) {
@@ -477,7 +499,9 @@ export default function ConditionsScreen() {
         setStep('confirm');
       }
     } finally {
-      clearInterval(timer);
+      if (isMountedRef.current) {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -807,13 +831,21 @@ export default function ConditionsScreen() {
               <ActivityIndicator size="large" color="#0a7ea4" />
               <Text style={styles.heading}>あなたに合うドライブを考えています</Text>
               <View style={styles.thinkingList}>
-                {THINKING_MESSAGES.map((message, index) => (
-                  <Text key={message} style={[styles.thinkingItem, index <= thinkingIndex && styles.thinkingItemActive]}>
-                    {index <= thinkingIndex ? '✓ ' : '・'}
-                    {message}
+                {thinkingUsesAi && (
+                  <Text
+                    style={[
+                      styles.thinkingItem,
+                      (thinkingPhase === 'interpreting' || thinkingPhase === 'planning') && styles.thinkingItemActive,
+                    ]}>
+                    {thinkingPhase === 'planning' ? '✓ ' : '・'}
+                    あなたの希望を読み取っています
                   </Text>
-                ))}
+                )}
+                <Text style={[styles.thinkingItem, thinkingPhase === 'planning' && styles.thinkingItemActive]}>
+                  ・条件に合うプランを考えています
+                </Text>
               </View>
+              {aiNotice && <Text style={styles.noticeText}>{aiNotice}</Text>}
             </View>
           )}
         </ScrollView>
@@ -821,7 +853,7 @@ export default function ConditionsScreen() {
         {step !== 'thinking' && (
           <View style={styles.footer}>
             {step === 'confirm' ? (
-              <PrimaryButton label="今日のルートを見つける" onPress={handleSubmit} />
+              <PrimaryButton label="今日のルートを見つける" onPress={handleSubmit} disabled={submitting} />
             ) : (
               <PrimaryButton
                 label="次へ"

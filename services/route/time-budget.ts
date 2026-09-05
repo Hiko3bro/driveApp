@@ -17,7 +17,7 @@ const DEFAULT_CUSTOM_MINUTES = AVAILABLE_TIME_MINUTES['2h'];
 const MIN_ROUTE_BUDGET_MINUTES = 10;
 
 /** 「使える時間」を分数へ変換する。"custom"はcustomAvailableMinutesを使う。 */
-function resolveAvailableMinutes(conditions: DriveConditions): number {
+export function resolveAvailableMinutes(conditions: DriveConditions): number {
   if (conditions.availableTime === 'custom') {
     const custom = conditions.customAvailableMinutes;
     return Number.isFinite(custom) && (custom as number) > 0 ? (custom as number) : DEFAULT_CUSTOM_MINUTES;

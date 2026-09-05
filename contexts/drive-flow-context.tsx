@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
 import { isValidCoordinates } from '@/services/location/coordinates';
+import type { AiInterpretationResult } from '@/types/ai-route-preferences';
 import type { DriveConditions } from '@/types/drive';
 import type { DriveDiaryEntry } from '@/types/drive-diary';
 import type { DriveRecordingResult } from '@/types/drive-recording';
@@ -32,6 +33,13 @@ interface DriveFlowState {
   diaryEntries: DriveDiaryEntry[];
   /** 直近に作成した日記のid。日記作成後の確認画面が参照する、1セッションだけの一時状態。 */
   latestDiaryEntryId: string | null;
+  /**
+   * AI(Supabase Edge Function ai-route-planning)がaiNoteから解釈した嗜好。
+   * 1回の計画セッションだけに属する一時状態で、resetPlanningSession()や
+   * beginConditionsEdit()(条件を変える)で必ずクリアする。古いAI結果を
+   * 新しいドライブや変更後の条件へ持ち越して再利用しない。
+   */
+  aiInterpretation: AiInterpretationResult | null;
 }
 
 interface DriveFlowContextValue extends DriveFlowState {
@@ -44,6 +52,8 @@ interface DriveFlowContextValue extends DriveFlowState {
   setSelectedSpotIds: (routeId: string, spotIds: string[]) => void;
   setDriveRecord: (record: DriveRecordingResult) => void;
   addDiaryEntry: (entry: DriveDiaryEntry) => void;
+  /** AI解釈結果を保存する。nullを渡すとクリアする(呼び出し失敗時・条件変更時など)。 */
+  setAiInterpretation: (result: AiInterpretationResult | null) => void;
   /**
    * ホームの「今からドライブ」など、新規にドライブを1回始める入口からだけ呼ぶ。
    * 「1回のドライブ計画・実走・記録」というセッションに属する一時状態(出発地点・
@@ -55,8 +65,10 @@ interface DriveFlowContextValue extends DriveFlowState {
   resetPlanningSession: () => void;
   /**
    * ルート比較画面の「条件を変える」など、既存のDriveConditionsを保持したまま
-   * 条件入力ウィザードへ戻る入口から呼ぶ。データは一切変更せず、
-   * planningEntryModeだけを'edit'にする。
+   * 条件入力ウィザードへ戻る入口から呼ぶ。DriveConditions自体は変更せず
+   * planningEntryModeを'edit'にする。ただし過去のAI解釈結果は、変更後の条件と
+   * 食い違ったまま使われないよう、ここでクリアする(再度「この条件で探す」を
+   * 押した時に必要なら改めて解釈する)。
    */
   beginConditionsEdit: () => void;
   reset: () => void;
@@ -79,6 +91,7 @@ const initialState: DriveFlowState = {
   driveRecord: null,
   diaryEntries: [],
   latestDiaryEntryId: null,
+  aiInterpretation: null,
 };
 
 const DriveFlowContext = createContext<DriveFlowContextValue | null>(null);
@@ -198,6 +211,10 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const setAiInterpretation = useCallback((result: AiInterpretationResult | null) => {
+    setState((prev) => ({ ...prev, aiInterpretation: result }));
+  }, []);
+
   const resetPlanningSession = useCallback(() => {
     setState((prev) => ({
       ...prev,
@@ -209,13 +226,14 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       ...emptySpotState,
       driveRecord: null,
       latestDiaryEntryId: null,
+      aiInterpretation: null,
       // diaryEntriesは履歴のため保持する。自宅・保存済み場所・最近使った場所は
       // このContextの外(expo-secure-store)にあるため、そもそもここでは触れない。
     }));
   }, []);
 
   const beginConditionsEdit = useCallback(() => {
-    setState((prev) => ({ ...prev, planningEntryMode: 'edit' }));
+    setState((prev) => ({ ...prev, planningEntryMode: 'edit', aiInterpretation: null }));
   }, []);
 
   const reset = useCallback(() => {
@@ -234,6 +252,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,
+      setAiInterpretation,
       resetPlanningSession,
       beginConditionsEdit,
       reset,
@@ -249,6 +268,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,
+      setAiInterpretation,
       resetPlanningSession,
       beginConditionsEdit,
       reset,

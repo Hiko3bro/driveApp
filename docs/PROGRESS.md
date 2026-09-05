@@ -21,6 +21,45 @@
 
 ---
 
+## 2026-09-06
+
+`feature/ai-route-planning` ブランチで、既にdeploy済みのSupabase Edge Function `ai-route-planning` を、`app/conditions.tsx` の条件入力ウィザードへ接続した(commit・pushは未実施、ユーザー指示によりこのセッションでは行わない)。
+
+### 完了したこと
+
+- `npx expo install expo-crypto` を追加した(ユーザー承認済み)。既存コード・React Native/Expoコアには暗号学的に安全なUUID生成手段がなかったため、`Crypto.randomUUID()`を利用する
+- `services/device/install-id-store.ts` を新規追加。`home-location-store.ts`と同じパターン(expo-secure-store、モジュールキー`drive-discovery.install-id`)で、端末単位の匿名UUIDを初回のみ生成・保存し、以降再利用する。ユーザーID・ハードウェア固有IDではなく、ログ・UIにも出力しない
+- `types/ai-route-preferences.ts` を新規追加。Edge Function側(`supabase/functions/ai-route-planning/ai-types.ts`、Denoランタイムのためアプリのtsconfigに含まれない)の`AiRoutePreferences`型を、クライアント側で手動同期する形で定義した
+- `services/ai/route-planning-client.ts` を新規追加。`EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`を読み、未設定なら開発時にわかりやすい警告を出して`config_missing`を返す(秘密値を推測・ハードコードしない)。`x-install-id`ヘッダーを付けて`/functions/v1/ai-route-planning`へPOSTし、クライアント側タイムアウトは18秒(サーバー側の最大1回リトライを含む最悪ケース約16.3秒を上回る値)。応答は`ok`/`data`/`aiUsed`/`fallback`/`preferences`の型を実行時に検証し、想定外の形なら例外を投げずに`invalid_response`を返す。クライアント側からの自動リトライは行わない
+- `services/route/time-budget.ts` の`resolveAvailableMinutes`を、AI送信ペイロード構築のために`export`した(ロジックの複製はしていない)
+- `contexts/drive-flow-context.tsx` に、1回の計画セッションだけに属する`aiInterpretation`(`{ aiUsed, fallback, preferences } | null`)状態と`setAiInterpretation`セッターを追加。`resetPlanningSession()`(新規ドライブ開始)と`beginConditionsEdit()`(「条件を変える」)の両方でこの状態をクリアし、古いAI解釈結果を新しいセッションや変更後の条件へ持ち越さないようにした
+- `app/conditions.tsx`: 「今日のルートを見つける」押下時の`handleSubmit`を書き換えた
+  - `aiNote`が空なら、AI Gatewayへは問い合わせず(サーバー側の`shouldUseAi`判定を待たずクライアント側で判定)、これまでどおり構造化条件だけでルート提案に進む
+  - `aiNote`があれば、条件確認画面の押下時に一度だけ`requestAiRoutePreferences()`を呼ぶ(7/7入力時点では呼ばない)。成功時は`aiUsed`/`fallback`/`preferences`をDriveFlowContextに保存。失敗・タイムアウト・不正な応答・サーバー側フォールバックのいずれでも画面は止めず、「AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。」という短い案内を表示したうえで構造化条件だけのルート生成を続行する
+  - 「考えています」演出を、固定時間のタイマー(`THINKING_MESSAGES`/`THINKING_STEP_MS`)から、実際の非同期処理の進行(`interpreting`→`planning`)に合わせて切り替わる方式に変更した。「あなたの希望を読み取っています」はAIに問い合わせる場合のみ表示する。技術用語(OpenAI/API/GPT等)は表示しない
+  - 連打による二重リクエストを防ぐため`submitting`状態を追加し、確認画面の送信ボタンに`disabled`を付けた(ボタン自体は`step`が`'thinking'`になった時点で非表示にもなる)
+- `.env.example` の該当箇所を更新: `EXPO_PUBLIC_SUPABASE_ANON_KEY` → `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`(実際に使用するキー名に合わせた)。`SUPABASE_SERVICE_ROLE_KEY`はExpoアプリの`.env`に置くべきではないため、Supabase Edge Function Secrets側でのみ設定する旨のコメントに変更した
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- `npx expo export --platform ios`: 1579モジュールがエラーなくバンドルできることを確認(Metro dev serverの`/index.bundle`直叩きはexpo-routerの構成では404になったため、`expo export`でのフルバンドル確認に切り替えた)
+- Supabase Edge Function自体は再deployしていない(既にdeploy済み・変更不要と判断)
+
+### 未完了
+
+- iPhone実機での動作確認(ユーザー側で実施予定): `.env`に`EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`を設定した状態での、AI解釈あり/なし両方のルート提案までの一連の動作
+- AIが返した`avoidHighways`/`preferScenicRoads`等のフィールドを、モックルート生成(`mock-route-provider.ts`)の説明文へ反映する対応(今回は優先度を下げ、意図的に見送った。架空の道路・座標・店舗を生成しないという制約は変わらない)
+- `interpretationSummary`をUIへ表示する対応(必須要件ではないため今回は見送った)
+
+### 次にやること
+
+- iPhone実機で、AIノートあり/なしの両方のパターンと、意図的な設定不備(`.env`未設定)・機内モード等でのフォールバック動作を確認する
+- 確認後、Google Routes/Places APIとの接続や、AI結果をルート生成へ反映する対応を別タスクとして計画する
+
+---
+
 ## 2026-09-03
 
 `feature/drive-planning-wizard` ブランチ(`feature/route-condition-improvements`からの派生)で、ドライブ条件入力を1画面フォームから多段階ウィザードへ全面的に再設計した(commit・pushは未実施)。
