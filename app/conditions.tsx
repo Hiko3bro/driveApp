@@ -22,6 +22,8 @@ import { requestAiRoutePreferences, shouldRequestAiInterpretation } from '@/serv
 import { addSavedPlace, getSavedPlaces } from '@/services/location/saved-places-store';
 import { getRecentPlaces, recordRecentPlace } from '@/services/location/recent-places-store';
 import { getRouteProvider, RoutePlanningError } from '@/services/route';
+import { buildRouteOptionsFromGoogleCandidates } from '@/services/route/google-route-mapper';
+import { requestGoogleRoutes } from '@/services/route/google-routes-client';
 import {
   AVAILABLE_TIME_LABELS,
   MAX_SELECTED_MOODS,
@@ -450,6 +452,11 @@ export default function ConditionsScreen() {
     setConditions(nextConditions);
 
     try {
+      // AI結果のavoidHighwaysだけをGoogle Routesへ引き継ぐ(fallback含め常にboolean)。
+      // preferCoastalRoads/preferScenicRoads等はGoogle Routes APIが直接サポートしないため、
+      // 今回は渡さない(次のGoogle Places/候補地点選定で利用する)。
+      let avoidHighways = false;
+
       if (willUseAi) {
         // AIには構造化条件と自由記述だけを送る(座標・住所・保存場所・GPS履歴は送らない)。
         // クライアント側では自動リトライしない(サーバー側で既に最大1回リトライ済み)。
@@ -457,6 +464,7 @@ export default function ConditionsScreen() {
         if (isMountedRef.current) {
           if (outcome.ok) {
             setAiInterpretation(outcome.result);
+            avoidHighways = outcome.result.preferences.avoidHighways;
             if (outcome.result.fallback) {
               setAiNotice('AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。');
             }
@@ -473,20 +481,65 @@ export default function ConditionsScreen() {
         setThinkingPhase('planning');
       }
 
-      const provider = getRouteProvider();
-      const routeResults = await provider.getRoutes({ departure, conditions: nextConditions });
-      if (routeResults.length === 0) {
-        throw new RoutePlanningError('選んだ条件ではルートを作れません。条件を変更してください。');
-      }
-      if (isMountedRef.current) {
-        setRoutes(routeResults);
-        // 「考えています」演出は一時的な遷移状態でしかない。この画面をスタックに
-        // 残したままpushすると、ルート比較画面から戻ったときに「考えています」の
-        // まま操作不能になってしまうため、replaceでスタックから取り除く。念のため
-        // stepも確認画面へ戻しておき、万一この画面が再び表示されても「考えています」
-        // が固まって見えたり、待機が勝手に再開したりしないようにする。
-        setStep('confirm');
-        router.replace('/route-compare');
+      // 目的地(finalDestination)が実際に指定されている場合のみ、Supabase Edge Function
+      // (google-routes)経由でGoogle Routes APIの実データを使う。座標はplanning session内の
+      // 実データ(出発地点・実際に選んだ目的地・実際に追加した経由地点)のみを送り、
+      // 新しく座標を捏造しない。目的地なし(出発地点に戻る)は、今回は既存のmock route
+      // flowを維持する(次のGoogle Places連携で対応予定)。
+      if (nextConditions.finalDestination) {
+        const destination = nextConditions.finalDestination;
+        // Google Routes Edge Function自体にも同じ上限があるが、確実に失敗するリクエストを
+        // 送らないよう、クライアント側でも安全に切り詰める。
+        const intermediates = nextConditions.viaPoints.map((point) => point.coordinates);
+
+        const googleOutcome = await requestGoogleRoutes({
+          origin: departure.coordinates,
+          destination: destination.coordinates,
+          intermediates,
+          avoidHighways,
+        });
+
+        if (!googleOutcome.ok || googleOutcome.routes.length === 0) {
+          // 実APIの失敗時に、架空のmock routeを「本物のルート」として黙って表示しない。
+          throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
+        }
+
+        const routeOptions = buildRouteOptionsFromGoogleCandidates(googleOutcome.routes, {
+          departureLabel: departure.label,
+          destinationLabel: destination.label,
+          viaPoints: nextConditions.viaPoints.map((point) => ({
+            label: point.label,
+            coordinates: point.coordinates,
+          })),
+          avoidHighwaysApplied: avoidHighways,
+        });
+
+        if (routeOptions.length === 0) {
+          // 全候補でpolylineのdecodeに失敗した場合も、実ルートが得られなかったものとして扱う。
+          throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
+        }
+
+        if (isMountedRef.current) {
+          setRoutes(routeOptions);
+          setStep('confirm');
+          router.replace('/route-compare');
+        }
+      } else {
+        const provider = getRouteProvider();
+        const routeResults = await provider.getRoutes({ departure, conditions: nextConditions });
+        if (routeResults.length === 0) {
+          throw new RoutePlanningError('選んだ条件ではルートを作れません。条件を変更してください。');
+        }
+        if (isMountedRef.current) {
+          setRoutes(routeResults);
+          // 「考えています」演出は一時的な遷移状態でしかない。この画面をスタックに
+          // 残したままpushすると、ルート比較画面から戻ったときに「考えています」の
+          // まま操作不能になってしまうため、replaceでスタックから取り除く。念のため
+          // stepも確認画面へ戻しておき、万一この画面が再び表示されても「考えています」
+          // が固まって見えたり、待機が勝手に再開したりしないようにする。
+          setStep('confirm');
+          router.replace('/route-compare');
+        }
       }
     } catch (error) {
       if (isMountedRef.current) {
@@ -842,7 +895,7 @@ export default function ConditionsScreen() {
                   </Text>
                 )}
                 <Text style={[styles.thinkingItem, thinkingPhase === 'planning' && styles.thinkingItemActive]}>
-                  ・条件に合うプランを考えています
+                  ・ルートを探しています
                 </Text>
               </View>
               {aiNotice && <Text style={styles.noticeText}>{aiNotice}</Text>}

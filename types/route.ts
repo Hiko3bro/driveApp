@@ -19,4 +19,6 @@ export interface RouteOption {
   highlight: string;
   /** どんな人向けのルートかを表す短い説明。 */
   audience: string;
+  /** ルートの出どころ。'google'はGoogle Routes API由来の実ルート、'mock'は演出用の仮ルート。未指定は'mock'相当として扱う。 */
+  source?: 'mock' | 'google';
 }

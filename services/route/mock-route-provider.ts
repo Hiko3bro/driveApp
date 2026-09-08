@@ -323,6 +323,7 @@ function buildRoute(
     path: geometry.path,
     highlight: archetype.highlight,
     audience: archetype.audience,
+    source: 'mock',
   };
 }
 
