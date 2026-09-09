@@ -428,3 +428,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/google-routes/deno.json"
 entrypoint = "./functions/google-routes/index.ts"
+
+[functions.google-places]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-places/deno.json"
+entrypoint = "./functions/google-places/index.ts"
