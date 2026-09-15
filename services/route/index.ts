@@ -5,9 +5,9 @@ export { RoutePlanningError } from '@/services/route/route-provider';
 export type { RouteProvider, RouteSearchParams } from '@/services/route/route-provider';
 
 /**
- * ルート提案の取得方法をここで切り替える。
- * Google Routes API等の有料APIを導入する際は、ここを
- * `new GoogleRoutesProvider()` に差し替える。
+ * テスト・デモ用のモックルート取得口。本番のplanning flow(app/conditions.tsx)は
+ * 実際の道路データを使うdrive-route-planner(services/route/drive-route-planner-client.ts)
+ * を直接使い、このMockRouteProviderは呼ばない。
  */
 export function getRouteProvider(): RouteProvider {
   return new MockRouteProvider();

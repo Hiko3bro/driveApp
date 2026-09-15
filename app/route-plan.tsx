@@ -7,7 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { isValidCoordinates } from '@/services/location/coordinates';
+import { openGoogleMapsNavigation } from '@/services/navigation/google-maps-navigation';
+import { resolveAvailableMinutes } from '@/services/route/time-budget';
+import { recalculateSpotRouteWithGoogleRoutes } from '@/services/spot/spot-route-recalculation';
 import { calculateSpotRoutePlan, SpotRoutePlanError } from '@/services/spot/spot-route-plan';
+import { updateTripDay } from '@/services/trip/trip-store';
+import type { Coordinates } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 import type { Spot, SpotRoutePlan } from '@/types/spot';
 
@@ -32,7 +37,7 @@ function resolveSpotsByIds(spots: Spot[], spotIds: string[]): Spot[] {
 }
 
 export default function RoutePlanScreen() {
-  const { departure, conditions, routes, selectedRouteId, spots, selectedSpotIds } =
+  const { departure, conditions, routes, selectedRouteId, spots, selectedSpotIds, activeTripDay } =
     useDriveFlow();
   const route = useMemo(() => resolveRoute(routes, selectedRouteId), [routes, selectedRouteId]);
   const selectedSpots = useMemo(
@@ -43,11 +48,33 @@ export default function RoutePlanScreen() {
   const [isDeciding, setIsDeciding] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [isOpeningNav, setIsOpeningNav] = useState(false);
+  const [navError, setNavError] = useState<string | null>(null);
+  // Google Routesによる実道路の再計算結果(選択スポットがある場合のみ)。
+  const [recalculatedPlan, setRecalculatedPlan] = useState<SpotRoutePlan | null>(null);
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [recalcError, setRecalcError] = useState<string | null>(null);
+  const recalcRequestRef = useRef(0);
+
+  // Google Mapsへ渡す最終目的地は、drive-route-plannerが実測に使ったのと同じ地点
+  // (「別の場所」を指定していればその実座標、それ以外は出発地点=ループ)。Hooksの
+  // 呼び出し順を保つため、早期returnより前(departure/conditionsがnullの可能性がある
+  // 時点)でuseMemo化しておく。
+  const finalDestinationCoords = useMemo<Coordinates | null>(() => {
+    if (!departure) {
+      return null;
+    }
+    return conditions?.returnTarget === 'different' && conditions.finalDestination
+      ? conditions.finalDestination.coordinates
+      : departure.coordinates;
+  }, [departure, conditions]);
 
   // スポット探索は任意のため、spot-discoveryを経由せずスポット0件でこの画面に
   // 直接来た場合も許可する(spotRouteId・selectedSpotIdsはルート選択時にリセットされる
   // ため、spot-discovery未経由なら自然にselectedSpots.length === 0になる)。
-  const plan = useMemo<SpotRoutePlan | null>(() => {
+  // Google Routesの応答が届くまでの初期値・フォールバック用に、Haversineの見積もりも
+  // 引き続き同期的に計算しておく。
+  const estimatedPlan = useMemo<SpotRoutePlan | null>(() => {
     if (!route || !conditions || selectedSpots.length !== selectedSpotIds.length) {
       return null;
     }
@@ -57,6 +84,69 @@ export default function RoutePlanScreen() {
       return null;
     }
   }, [route, conditions, selectedSpots, selectedSpotIds.length]);
+
+  // 選択スポットを追加した時点(=この画面に到達した時点)で、既存のdeploy済み
+  // google-routes Edge Functionを使い、origin → userViaPoints → suggestedPlace →
+  // selectedSpots → destination(ループならorigin)の順で実際の道路ルートを再計算する。
+  // 失敗してもHaversineの見積もり(estimatedPlan)を使い続け、画面は止めない
+  // (mockへのフォールバックではなく、既存の実座標ベースの見積もりへの後退)。
+  // useFocusEffect(useEffectではなく)を使うのは、この画面へフォーカスが戻るたびに
+  // 最新の選択スポットで再計算し直すためと、他画面(spot-discovery.tsx)と同じ
+  // 「フォーカス中の非同期取得」パターンに揃えるため。
+  useFocusEffect(
+    useCallback(() => {
+      if (!route || !conditions || !departure || !finalDestinationCoords || selectedSpots.length === 0) {
+        setRecalculatedPlan(null);
+        setRecalcError(null);
+        setIsRecalculating(false);
+        return;
+      }
+      if (selectedSpots.length !== selectedSpotIds.length) {
+        setRecalculatedPlan(null);
+        setRecalcError(null);
+        setIsRecalculating(false);
+        return;
+      }
+
+      let cancelled = false;
+      const requestId = recalcRequestRef.current + 1;
+      recalcRequestRef.current = requestId;
+      // 選択スポットが変わった時点で、古い選択に対する実測値をplanに残したまま
+      // 見せ続けないよう、いったんクリアする(新しい実測が届くまではHaversineの
+      // 見積もり(estimatedPlan)へ一時的に後退する)。
+      setRecalculatedPlan(null);
+      setIsRecalculating(true);
+      setRecalcError(null);
+
+      void recalculateSpotRouteWithGoogleRoutes({
+        route,
+        spots: selectedSpots,
+        conditions,
+        origin: departure.coordinates,
+        destination: finalDestinationCoords,
+      }).then((outcome) => {
+        if (cancelled || recalcRequestRef.current !== requestId) {
+          return;
+        }
+        setIsRecalculating(false);
+        if (outcome.ok) {
+          setRecalculatedPlan(outcome.plan);
+          setRecalcError(null);
+        } else {
+          setRecalculatedPlan(null);
+          setRecalcError('実際の道路距離・時間を計算できませんでした。目安の数値を表示しています。');
+        }
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [route, conditions, departure, finalDestinationCoords, selectedSpots, selectedSpotIds.length])
+  );
+
+  // 実測(Google Routes)が得られていればそれを、無ければHaversineの見積もりを使う。
+  // 以降の画面全体(距離・時間・Polyline・決定・ナビ)はこのplanだけを参照する。
+  const plan = recalculatedPlan ?? estimatedPlan;
 
   // MapView/Marker/Polylineへ渡す直前の最終チェック。ここまでの計算過程は既に
   // 座標を検証しているはずだが、万一不正値が紛れ込んでもネイティブ地図へは渡さず、
@@ -102,7 +192,7 @@ export default function RoutePlanScreen() {
     }
   }, [departure, conditions, route, plan]);
 
-  if (!departure || !conditions || !route || !plan) {
+  if (!departure || !conditions || !route || !plan || !finalDestinationCoords) {
     return <SafeAreaView style={styles.safeArea} />;
   }
 
@@ -115,6 +205,42 @@ export default function RoutePlanScreen() {
       router.back();
     } else {
       router.push('/spot-discovery');
+    }
+  };
+
+  // origin → userViaPoints → suggestedPlace → (寄り道スポット探索で後から追加したスポット)
+  // → destination(または出発地点)の順を維持する。suggestedPlaceはOrchestratorが
+  // 実際にGoogle Routesの計算へ使ったのと同じ座標(route.suggestedPlace.coordinates)。
+  // services/spot/spot-route-recalculation.tsが実道路の再計算に使うwaypoint順と必ず一致させる。
+  const navWaypoints: Coordinates[] = [
+    ...conditions.viaPoints.map((point) => point.coordinates),
+    ...(route.suggestedPlace ? [route.suggestedPlace.coordinates] : []),
+    ...selectedSpots.map((spot) => spot.coordinates),
+  ];
+
+  // 時間超過は警告のみ(ナビ・決定操作をブロックしない)。planが実測(Google Routes)か
+  // 見積もり(Haversine)かに関わらず、plan.budgetMessageが「この寄り道をすると
+  // 目安時間を約○分超えそうです」のような非ブロッキングの文言を持つ。
+  const showTimeOverageWarning = !plan.isWithinBudget && Boolean(plan.budgetMessage);
+
+  const handleOpenGoogleMapsNav = async () => {
+    if (isOpeningNav) {
+      return;
+    }
+    setIsOpeningNav(true);
+    setNavError(null);
+    try {
+      const result = await openGoogleMapsNavigation({
+        origin: departure.coordinates,
+        waypoints: navWaypoints,
+        destination: finalDestinationCoords,
+        avoidHighways: route.avoidHighwaysApplied,
+      });
+      if (!result.ok) {
+        setNavError('Google Mapsを開けませんでした。もう一度お試しください。');
+      }
+    } finally {
+      setIsOpeningNav(false);
     }
   };
 
@@ -143,14 +269,26 @@ export default function RoutePlanScreen() {
     setDecisionError(null);
 
     try {
-      const latestPlan = calculateSpotRoutePlan(route, selectedSpots, conditions);
-      if (!latestPlan.isWithinBudget) {
-        setDecisionError(
-          latestPlan.budgetMessage ?? '選んだ条件の時間内に収まりません。寄るところを選び直してください。'
-        );
-        return;
-      }
+      // 時間超過(isWithinBudget === false)は警告扱いとし、決定操作はブロックしない
+      // (ルート自体はGoogle Routesの実測に基づいており、超過を理由にユーザーの選択を
+      // 拒否しない)。calculateSpotRoutePlan自体が投げる検証エラー(スポットの重複等)
+      // のみを引き続きブロック対象として扱う。
+      calculateSpotRoutePlan(route, selectedSpots, conditions);
       setCompleted(true);
+
+      // 旅行日から始めた計画セッションなら、決定したルートをその日へ保存する
+      // (旅行専用の別ルートエンジンは使わず、既存のdrive-route-plannerの結果をそのまま保存)。
+      if (activeTripDay) {
+        void updateTripDay(activeTripDay.tripId, activeTripDay.dayId, {
+          startLocation: { label: departure.label, coordinates: departure.coordinates },
+          endLocation: conditions.returnTarget === 'different' ? conditions.finalDestination : undefined,
+          availableTimeMinutes: resolveAvailableMinutes(conditions),
+          mustVisitPlaces: conditions.viaPoints,
+          aiNote: conditions.aiNote,
+          generatedRoutes: routes,
+          selectedRouteId: route.id,
+        });
+      }
     } catch (error: unknown) {
       setDecisionError(
         error instanceof SpotRoutePlanError
@@ -173,17 +311,31 @@ export default function RoutePlanScreen() {
             {hasSpots ? `寄るところ ${selectedSpots.length}件 ・ ` : ''}
             {plan.distanceKm}km ・ 約{plan.durationMinutes}分
           </Text>
+          {showTimeOverageWarning && (
+            <View style={styles.timeOverageWarningBox}>
+              <Text style={styles.timeOverageWarningText}>
+                {plan.budgetMessage} 時間に余裕をもって出発してください。
+              </Text>
+            </View>
+          )}
           <View style={styles.completedNotice}>
-            <Text style={styles.completedNoticeTitle}>次に実装予定の機能</Text>
+            <Text style={styles.completedNoticeTitle}>ナビの選び方</Text>
             <Text style={styles.completedNoticeText}>
-              次はGoogleマップでのナビ連携を実装予定です。現在はモックルートの確認までで、外部アプリは開きません。
+              「Google Mapsでナビする」は外部のGoogle Mapsアプリ(無ければブラウザ)でturn-by-turnの音声案内を使えます。
+              「アプリ内で記録」は、この画面のまま位置情報を記録しながらドライブする、これまでの機能です。どちらか一方だけを選ぶ必要はなく、Google
+              Mapsでナビしながらアプリ内記録を開始することもできます。
             </Text>
           </View>
-          <Text style={styles.reviewPolicy}>
-            実在スポットへ接続した将来版では、評価・口コミをアプリ内で模倣せず、Googleマップで確認できる導線を提供します。
-          </Text>
+          {navError && <Text style={styles.errorText}>{navError}</Text>}
           <PrimaryButton
-            label="ドライブを開始"
+            label={isOpeningNav ? 'Google Mapsを開いています…' : 'Google Mapsでナビする'}
+            onPress={handleOpenGoogleMapsNav}
+            disabled={isOpeningNav}
+            style={styles.fullWidth}
+          />
+          <PrimaryButton
+            label="アプリ内で記録"
+            variant="secondary"
             onPress={() => router.push('/drive-recording')}
             style={styles.fullWidth}
           />
@@ -212,6 +364,12 @@ export default function RoutePlanScreen() {
         <Text style={styles.meta}>
           {hasSpots ? '更新後' : 'ルート情報'}: {plan.distanceKm}km ・ 約{plan.durationMinutes}分
         </Text>
+        {hasSpots && isRecalculating && (
+          <Text style={styles.recalcNoticeText}>実際の道路距離・時間を計算しています…</Text>
+        )}
+        {hasSpots && !isRecalculating && recalcError && (
+          <Text style={styles.recalcNoticeText}>{recalcError}</Text>
+        )}
 
         <View style={[styles.budgetBox, !plan.isWithinBudget && styles.budgetBoxError]}>
           <Text style={[styles.budgetText, !plan.isWithinBudget && styles.budgetTextError]}>
@@ -232,7 +390,7 @@ export default function RoutePlanScreen() {
                 <View style={styles.stopContent}>
                   <Text style={styles.stopName}>{spot.name}</Text>
                   <Text style={styles.stopMeta}>
-                    {spot.category} ・ 寄ると約{spot.extraMinutes}分 ・ モック
+                    {spot.category} ・ 寄ると約{spot.extraMinutes}分{spot.isMock ? ' ・ モック' : ''}
                   </Text>
                 </View>
               </View>
@@ -246,7 +404,7 @@ export default function RoutePlanScreen() {
         <PrimaryButton
           label={isDeciding ? '内容を確認しています…' : 'この内容で決定'}
           onPress={handleDecide}
-          disabled={isDeciding || !plan.isWithinBudget}
+          disabled={isDeciding}
         />
         <PrimaryButton
           label={secondarySpotLabel}
@@ -323,6 +481,11 @@ const styles = StyleSheet.create({
   meta: {
     fontSize: 14,
     color: '#5b6770',
+    marginBottom: 10,
+  },
+  recalcNoticeText: {
+    fontSize: 12,
+    color: '#8b6a1f',
     marginBottom: 10,
   },
   budgetBox: {
@@ -414,6 +577,19 @@ const styles = StyleSheet.create({
     color: '#5b6770',
     textAlign: 'center',
     marginBottom: 22,
+  },
+  timeOverageWarningBox: {
+    width: '100%',
+    borderRadius: 10,
+    backgroundColor: '#fff0ed',
+    padding: 12,
+    marginBottom: 14,
+  },
+  timeOverageWarningText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#c0392b',
+    textAlign: 'center',
   },
   completedNotice: {
     width: '100%',

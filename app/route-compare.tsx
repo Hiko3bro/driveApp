@@ -18,7 +18,7 @@ import { PrimaryButton } from '@/components/ui/primary-button';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION } from '@/services/location/coordinates';
 import { computeRegionForPath } from '@/services/location/route-map-region';
-import { summarizeDriveConditions } from '@/types/drive';
+import { formatMinutesLabel, summarizeDriveConditions } from '@/types/drive';
 import type { MapRegion } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 
@@ -187,6 +187,18 @@ export default function RouteCompareScreen() {
         </View>
       )}
 
+      {selectedRoute.targetDurationMinutes !== undefined && (
+        <Text style={styles.targetDurationText}>
+          目安{formatMinutesLabel(selectedRoute.targetDurationMinutes)} / 約{formatMinutesLabel(selectedRoute.durationMinutes)}
+        </Text>
+      )}
+
+      {selectedRoute.warning && (
+        <View style={styles.warningBox}>
+          <Text style={styles.warningText}>{selectedRoute.warning}</Text>
+        </View>
+      )}
+
       <DriveMapView
         ref={mapRef}
         style={styles.map}
@@ -278,6 +290,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#5b6770',
+  },
+  targetDurationText: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    fontSize: 12,
+    color: '#8b959c',
+  },
+  warningBox: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 10,
+    backgroundColor: '#fff0ed',
+    padding: 10,
+  },
+  warningText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#c0392b',
   },
   map: {
     flex: 1,

@@ -12,6 +12,9 @@ export function SelectionCard({ title, subtitle, onPress, disabled }: SelectionC
     <Pressable
       onPress={onPress}
       disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}。${subtitle}`}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       style={({ pressed }) => [
         styles.card,
         Boolean(disabled) && styles.disabled,

@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
+import { getDiaryEntries, saveDiaryEntry } from '@/services/diary/diary-store';
 import { isValidCoordinates } from '@/services/location/coordinates';
 import type { AiInterpretationResult } from '@/types/ai-route-preferences';
 import type { DriveConditions } from '@/types/drive';
@@ -40,6 +41,14 @@ interface DriveFlowState {
    * 新しいドライブや変更後の条件へ持ち越して再利用しない。
    */
   aiInterpretation: AiInterpretationResult | null;
+  /**
+   * 現在の計画セッションが旅行プランのどの日に紐づいているか。旅行日から
+   * 「ルートを探す」で入った場合のみ設定される。nullなら通常の「今すぐドライブ」。
+   * resetPlanningSession()で必ずクリアする(新規ドライブに前回の旅行紐付けを
+   * 持ち越さない)。beginConditionsEdit()(条件を変える)では維持する(同じ旅行日の
+   * 編集を続けているため)。
+   */
+  activeTripDay: { tripId: string; dayId: string } | null;
 }
 
 interface DriveFlowContextValue extends DriveFlowState {
@@ -51,9 +60,21 @@ interface DriveFlowContextValue extends DriveFlowState {
   setSelectedSpotId: (routeId: string, spotId: string) => void;
   setSelectedSpotIds: (routeId: string, spotIds: string[]) => void;
   setDriveRecord: (record: DriveRecordingResult) => void;
-  addDiaryEntry: (entry: DriveDiaryEntry) => void;
+  /**
+   * 日記をin-memory stateへ即座に反映しつつ、AsyncStorageへの永続化も行い、その
+   * 書き込みが完了する(または失敗する)までawaitできるPromiseを返す。呼び出し元
+   * (日記作成画面)は、ユーザーが「保存完了」と認識する操作(保存ボタン→確認画面遷移)
+   * の前にこれをawaitすることで、書き込み完了前にアプリが終了して保存が失われる
+   * リスクを避ける。戻り値がfalseの場合、in-memory stateには反映済みだが端末への
+   * 永続化には失敗している(このセッション中は通常どおり使える)。
+   */
+  addDiaryEntry: (entry: DriveDiaryEntry) => Promise<boolean>;
+  /** 日記タブの一覧から既存の日記を開く際に使う。存在しないidは無視する。 */
+  selectDiaryEntry: (entryId: string) => void;
   /** AI解釈結果を保存する。nullを渡すとクリアする(呼び出し失敗時・条件変更時など)。 */
   setAiInterpretation: (result: AiInterpretationResult | null) => void;
+  /** 旅行日から計画を始める際にセットする。通常の「今すぐドライブ」ではnullのまま。 */
+  setActiveTripDay: (value: { tripId: string; dayId: string } | null) => void;
   /**
    * ホームの「今からドライブ」など、新規にドライブを1回始める入口からだけ呼ぶ。
    * 「1回のドライブ計画・実走・記録」というセッションに属する一時状態(出発地点・
@@ -92,12 +113,29 @@ const initialState: DriveFlowState = {
   diaryEntries: [],
   latestDiaryEntryId: null,
   aiInterpretation: null,
+  activeTripDay: null,
 };
 
 const DriveFlowContext = createContext<DriveFlowContextValue | null>(null);
 
 export function DriveFlowProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DriveFlowState>(initialState);
+
+  // アプリ起動時に、端末へ永続化済みの日記をAsyncStorageから読み込む。
+  // 旅行プラン等と異なり、diaryEntriesはホーム/日記タブから常時参照されるため
+  // 遅延読み込みではなくProvider起動時に一度だけ読み込む。
+  useEffect(() => {
+    let cancelled = false;
+    void getDiaryEntries().then((entries) => {
+      if (cancelled || entries.length === 0) {
+        return;
+      }
+      setState((prev) => (prev.diaryEntries.length > 0 ? prev : { ...prev, diaryEntries: entries }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const setDeparture = useCallback((departure: DepartureSelection) => {
     if (!isValidCoordinates(departure.coordinates)) {
@@ -131,15 +169,20 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /**
+   * カテゴリチップ単位のオンデマンド検索結果を、既存のspotsへ追加(マージ)する。
+   * 同じルートに対して複数回呼ばれる想定(カテゴリごとに1回ずつ)のため、
+   * 既存のspots・選択中のスポットは消さず、新規分だけをid重複除外のうえ追加する。
+   * ルートが切り替わった場合(spotRouteId !== routeId)のみ、初回として置き換える。
+   */
   const initializeSpotDiscovery = useCallback((routeId: string, spots: Spot[]) => {
     setState((prev) => {
       if (!prev.routes.some((route) => route.id === routeId)) {
         return prev;
       }
 
-      const uniqueSpots = spots.filter(
+      const validIncoming = spots.filter(
         (spot, index, all) =>
-          spot.isMock &&
           isValidCoordinates(spot.coordinates) &&
           Number.isFinite(spot.extraMinutes) &&
           spot.extraMinutes >= 0 &&
@@ -147,28 +190,31 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
           spot.extraDistanceKm >= 0 &&
           all.findIndex((candidate) => candidate.id === spot.id) === index
       );
-      const validIds = new Set(uniqueSpots.map((spot) => spot.id));
 
       if (prev.spotRouteId !== routeId) {
         return {
           ...prev,
           spotRouteId: routeId,
-          spots: uniqueSpots,
-          selectedSpotId: uniqueSpots[0]?.id ?? null,
+          spots: validIncoming,
+          selectedSpotId: validIncoming[0]?.id ?? null,
           selectedSpotIds: [],
         };
       }
+
+      const existingIds = new Set(prev.spots.map((spot) => spot.id));
+      const mergedSpots = [...prev.spots, ...validIncoming.filter((spot) => !existingIds.has(spot.id))];
+      const validIds = new Set(mergedSpots.map((spot) => spot.id));
 
       const selectedSpotIds = prev.selectedSpotIds
         .filter((id) => validIds.has(id))
         .slice(0, MAX_SELECTED_SPOTS);
       return {
         ...prev,
-        spots: uniqueSpots,
+        spots: mergedSpots,
         selectedSpotId:
           prev.selectedSpotId && validIds.has(prev.selectedSpotId)
             ? prev.selectedSpotId
-            : uniqueSpots[0]?.id ?? null,
+            : mergedSpots[0]?.id ?? null,
         selectedSpotIds,
       };
     });
@@ -203,16 +249,32 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, driveRecord: record }));
   }, []);
 
-  const addDiaryEntry = useCallback((entry: DriveDiaryEntry) => {
-    setState((prev) => ({
-      ...prev,
-      diaryEntries: [...prev.diaryEntries, entry],
-      latestDiaryEntryId: entry.id,
-    }));
+  const addDiaryEntry = useCallback(async (entry: DriveDiaryEntry): Promise<boolean> => {
+    setState((prev) => {
+      // 同じidでの再試行(保存失敗後の再保存操作)でも重複エントリを作らないよう、
+      // 既存があれば置き換える(upsert)。
+      const index = prev.diaryEntries.findIndex((existing) => existing.id === entry.id);
+      const nextDiaryEntries =
+        index === -1
+          ? [...prev.diaryEntries, entry]
+          : prev.diaryEntries.map((existing, i) => (i === index ? entry : existing));
+      return { ...prev, diaryEntries: nextDiaryEntries, latestDiaryEntryId: entry.id };
+    });
+    // AsyncStorageへの書き込みが完了するまで呼び出し元がawaitできるようにする
+    // (書き込み完了前に画面遷移・アプリ終了してしまうと保存が失われるため)。
+    return saveDiaryEntry(entry);
+  }, []);
+
+  const selectDiaryEntry = useCallback((entryId: string) => {
+    setState((prev) => (prev.diaryEntries.some((entry) => entry.id === entryId) ? { ...prev, latestDiaryEntryId: entryId } : prev));
   }, []);
 
   const setAiInterpretation = useCallback((result: AiInterpretationResult | null) => {
     setState((prev) => ({ ...prev, aiInterpretation: result }));
+  }, []);
+
+  const setActiveTripDay = useCallback((value: { tripId: string; dayId: string } | null) => {
+    setState((prev) => ({ ...prev, activeTripDay: value }));
   }, []);
 
   const resetPlanningSession = useCallback(() => {
@@ -227,6 +289,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       driveRecord: null,
       latestDiaryEntryId: null,
       aiInterpretation: null,
+      activeTripDay: null,
       // diaryEntriesは履歴のため保持する。自宅・保存済み場所・最近使った場所は
       // このContextの外(expo-secure-store)にあるため、そもそもここでは触れない。
     }));
@@ -252,7 +315,9 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,
+      selectDiaryEntry,
       setAiInterpretation,
+      setActiveTripDay,
       resetPlanningSession,
       beginConditionsEdit,
       reset,
@@ -268,7 +333,9 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,
+      selectDiaryEntry,
       setAiInterpretation,
+      setActiveTripDay,
       resetPlanningSession,
       beginConditionsEdit,
       reset,

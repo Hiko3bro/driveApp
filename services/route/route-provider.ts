@@ -15,8 +15,8 @@ export interface RouteSearchParams {
 }
 
 /**
- * ルート提案の取得口。実装はモック(MockRouteProvider)と、将来の
- * Google Routes API連携(GoogleRoutesProvider)とで差し替えられるようにする。
+ * テスト・デモ用のモックルート取得口(MockRouteProvider)。本番のplanning flowは
+ * services/route/drive-route-planner-client.tsを直接使うため、この抽象化は経由しない。
  */
 export interface RouteProvider {
   getRoutes(params: RouteSearchParams): Promise<RouteOption[]>;

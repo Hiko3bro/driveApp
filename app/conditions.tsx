@@ -21,9 +21,14 @@ import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { requestAiRoutePreferences, shouldRequestAiInterpretation } from '@/services/ai/route-planning-client';
 import { addSavedPlace, getSavedPlaces } from '@/services/location/saved-places-store';
 import { getRecentPlaces, recordRecentPlace } from '@/services/location/recent-places-store';
-import { getRouteProvider, RoutePlanningError } from '@/services/route';
-import { buildRouteOptionsFromGoogleCandidates } from '@/services/route/google-route-mapper';
-import { requestGoogleRoutes } from '@/services/route/google-routes-client';
+import { RoutePlanningError } from '@/services/route';
+import { buildRouteOptionsFromDrivePlans } from '@/services/route/drive-plan-mapper';
+import {
+  requestDrivePlans,
+  toDrivePlanPreferences,
+  type DrivePlanPreferences,
+} from '@/services/route/drive-route-planner-client';
+import { resolveEffectiveTimeBudget } from '@/services/route/time-budget';
 import {
   AVAILABLE_TIME_LABELS,
   MAX_SELECTED_MOODS,
@@ -77,6 +82,20 @@ const MAX_HOUR_PART = 23;
 const MAX_MINUTE_PART = 59;
 /** これ未満だと十分なルートを提案できないため、次へ進めずブロックする。 */
 const MIN_CUSTOM_TOTAL_MINUTES = 15;
+
+/** drive-route-planner側のMIN_AVAILABLE_TIME_MINUTESと合わせる。これ未満では実ルート提案自体を呼ばない。 */
+const MIN_DRIVE_PLAN_MINUTES = 15;
+
+/** AIに追加条件を伝えていない/AI結果が無い場合に使う、中立なデフォルト値。 */
+const DEFAULT_DRIVE_PLAN_PREFERENCES: DrivePlanPreferences = {
+  avoidHighways: false,
+  preferScenicRoads: false,
+  preferCoastalRoads: false,
+  preferMountainRoads: false,
+  preferredScenery: [],
+  desiredStops: [],
+  drivingStyle: 'balanced',
+};
 
 /**
  * 「考えています」画面の進行状況。実際の非同期処理の完了に合わせて切り替える
@@ -452,10 +471,20 @@ export default function ConditionsScreen() {
     setConditions(nextConditions);
 
     try {
-      // AI結果のavoidHighwaysだけをGoogle Routesへ引き継ぐ(fallback含め常にboolean)。
-      // preferCoastalRoads/preferScenicRoads等はGoogle Routes APIが直接サポートしないため、
-      // 今回は渡さない(次のGoogle Places/候補地点選定で利用する)。
-      let avoidHighways = false;
+      // 「2時間」等の選択・帰着日時から、実際に使える時間予算(分)を確定する。
+      // これをdrive-route-plannerへ渡し、時間予算を考慮したルート選定に実際に使う
+      // (これまでのようにorigin→destinationだけをGoogle Routesへ送って終わりにはしない)。
+      const timeBudget = resolveEffectiveTimeBudget(nextConditions);
+      if (!timeBudget.ok) {
+        throw new RoutePlanningError(timeBudget.message);
+      }
+      if (timeBudget.minutes < MIN_DRIVE_PLAN_MINUTES) {
+        throw new RoutePlanningError(
+          '選んだ時間・帰着日時では、実際のルートを作成するには短すぎます。時間か帰着日時を変更してください。'
+        );
+      }
+
+      let planPreferences: DrivePlanPreferences = DEFAULT_DRIVE_PLAN_PREFERENCES;
 
       if (willUseAi) {
         // AIには構造化条件と自由記述だけを送る(座標・住所・保存場所・GPS履歴は送らない)。
@@ -464,7 +493,7 @@ export default function ConditionsScreen() {
         if (isMountedRef.current) {
           if (outcome.ok) {
             setAiInterpretation(outcome.result);
-            avoidHighways = outcome.result.preferences.avoidHighways;
+            planPreferences = toDrivePlanPreferences(outcome.result.preferences);
             if (outcome.result.fallback) {
               setAiNotice('AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。');
             }
@@ -481,65 +510,76 @@ export default function ConditionsScreen() {
         setThinkingPhase('planning');
       }
 
-      // 目的地(finalDestination)が実際に指定されている場合のみ、Supabase Edge Function
-      // (google-routes)経由でGoogle Routes APIの実データを使う。座標はplanning session内の
-      // 実データ(出発地点・実際に選んだ目的地・実際に追加した経由地点)のみを送り、
-      // 新しく座標を捏造しない。目的地なし(出発地点に戻る)は、今回は既存のmock route
-      // flowを維持する(次のGoogle Places連携で対応予定)。
-      if (nextConditions.finalDestination) {
-        const destination = nextConditions.finalDestination;
-        // Google Routes Edge Function自体にも同じ上限があるが、確実に失敗するリクエストを
-        // 送らないよう、クライアント側でも安全に切り詰める。
-        const intermediates = nextConditions.viaPoints.map((point) => point.coordinates);
+      // 目的地あり/なしのどちらも、Supabase Edge Function(drive-route-planner)経由で
+      // 実座標・実道路のドライブプランを取得する(mockへは通常フローで一切フォールバック
+      // しない)。座標はplanning session内の実データ(出発地点・実際に選んだ目的地・
+      // 実際に追加した経由地点)のみを送り、新しく座標を捏造しない。ユーザーが指定した
+      // viaPointsは常にそのまま渡し、削除・並べ替え・候補地点との置き換えは行わない。
+      const finalDestination = nextConditions.finalDestination;
 
-        const googleOutcome = await requestGoogleRoutes({
-          origin: departure.coordinates,
-          destination: destination.coordinates,
-          intermediates,
-          avoidHighways,
+      const planOutcome = await requestDrivePlans({
+        origin: departure.coordinates,
+        destination: finalDestination?.coordinates,
+        userViaPoints: nextConditions.viaPoints.map((point) => point.coordinates),
+        returnTarget: finalDestination ? 'different' : 'same-as-departure',
+        availableTimeMinutes: timeBudget.minutes,
+        preferences: planPreferences,
+      });
+
+      if (!planOutcome.ok) {
+        // 実APIの失敗時に、架空のmock routeを「本物のルート」として黙って表示しない。
+        throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
+      }
+
+      const routeOptions = buildRouteOptionsFromDrivePlans(planOutcome.plans, planOutcome.meta, {
+        departureLabel: departure.label,
+        destinationLabel: finalDestination?.label,
+        userViaPoints: nextConditions.viaPoints.map((point) => ({
+          label: point.label,
+          coordinates: point.coordinates,
+        })),
+        avoidHighwaysApplied: planPreferences.avoidHighways,
+      });
+
+      if (routeOptions.length === 0) {
+        throw new RoutePlanningError(
+          finalDestination
+            ? '選んだ条件ではルートを作れませんでした。条件を変更してください。'
+            : '周辺で提案できるドライブプランが見つかりませんでした。条件を変更してください。'
+        );
+      }
+
+      if (__DEV__) {
+        // 調査用。緯度経度・場所名・aiNote・APIキー・installIdは出さない。
+        const inIdealTimeBandCount = routeOptions.filter((route) => {
+          if (route.targetDurationMinutes === undefined) {
+            return false;
+          }
+          const ratio = route.durationMinutes / route.targetDurationMinutes;
+          return ratio >= 0.85 && ratio <= 1.1;
+        }).length;
+        console.log('[conditions] drive plan result', {
+          hasDestination: Boolean(finalDestination),
+          userViaPointCount: nextConditions.viaPoints.length,
+          planCount: routeOptions.length,
+          usedSuggestedPlace: routeOptions.some((route) => Boolean(route.suggestedPlace)),
+          routeSources: routeOptions.map((route) => route.source),
+          overBudget: planOutcome.meta.overBudget,
+          searchRoundsUsed: planOutcome.meta.searchRoundsUsed,
+          inIdealTimeBandCount,
+          durationMinutesList: routeOptions.map((route) => route.durationMinutes),
         });
+      }
 
-        if (!googleOutcome.ok || googleOutcome.routes.length === 0) {
-          // 実APIの失敗時に、架空のmock routeを「本物のルート」として黙って表示しない。
-          throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
-        }
-
-        const routeOptions = buildRouteOptionsFromGoogleCandidates(googleOutcome.routes, {
-          departureLabel: departure.label,
-          destinationLabel: destination.label,
-          viaPoints: nextConditions.viaPoints.map((point) => ({
-            label: point.label,
-            coordinates: point.coordinates,
-          })),
-          avoidHighwaysApplied: avoidHighways,
-        });
-
-        if (routeOptions.length === 0) {
-          // 全候補でpolylineのdecodeに失敗した場合も、実ルートが得られなかったものとして扱う。
-          throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
-        }
-
-        if (isMountedRef.current) {
-          setRoutes(routeOptions);
-          setStep('confirm');
-          router.replace('/route-compare');
-        }
-      } else {
-        const provider = getRouteProvider();
-        const routeResults = await provider.getRoutes({ departure, conditions: nextConditions });
-        if (routeResults.length === 0) {
-          throw new RoutePlanningError('選んだ条件ではルートを作れません。条件を変更してください。');
-        }
-        if (isMountedRef.current) {
-          setRoutes(routeResults);
-          // 「考えています」演出は一時的な遷移状態でしかない。この画面をスタックに
-          // 残したままpushすると、ルート比較画面から戻ったときに「考えています」の
-          // まま操作不能になってしまうため、replaceでスタックから取り除く。念のため
-          // stepも確認画面へ戻しておき、万一この画面が再び表示されても「考えています」
-          // が固まって見えたり、待機が勝手に再開したりしないようにする。
-          setStep('confirm');
-          router.replace('/route-compare');
-        }
+      if (isMountedRef.current) {
+        setRoutes(routeOptions);
+        // 「考えています」演出は一時的な遷移状態でしかない。この画面をスタックに
+        // 残したままpushすると、ルート比較画面から戻ったときに「考えています」の
+        // まま操作不能になってしまうため、replaceでスタックから取り除く。念のため
+        // stepも確認画面へ戻しておき、万一この画面が再び表示されても「考えています」
+        // が固まって見えたり、待機が勝手に再開したりしないようにする。
+        setStep('confirm');
+        router.replace('/route-compare');
       }
     } catch (error) {
       if (isMountedRef.current) {

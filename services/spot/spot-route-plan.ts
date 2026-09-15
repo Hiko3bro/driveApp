@@ -26,7 +26,7 @@ function buildUpdatedPath(routePath: Coordinates[], spots: Spot[]): Coordinates[
   ];
 }
 
-/** 選択順のスポットを加えた距離・時間・表示経路をモックで再計算する。 */
+/** 選択順のスポットを加えた距離・時間・表示経路を、spot.extraMinutes/extraDistanceKmの推定値で再計算する。 */
 export function calculateSpotRoutePlan(
   route: RouteOption,
   spots: Spot[],
@@ -52,7 +52,6 @@ export function calculateSpotRoutePlan(
   if (
     spots.some(
       (spot) =>
-        !spot.isMock ||
         !isValidCoordinates(spot.coordinates) ||
         !Number.isFinite(spot.extraMinutes) ||
         spot.extraMinutes < 0 ||
@@ -70,7 +69,7 @@ export function calculateSpotRoutePlan(
   const budgetMessage = budget.ok
     ? isWithinBudget
       ? null
-      : `このスポットを追加すると約${durationMinutes}分となり、時間予算の${budget.minutes}分を超えます。別のスポットを選んでください。`
+      : `この寄り道をすると目安時間を約${Math.ceil(durationMinutes) - budget.minutes}分超えそうです。`
     : budget.message;
 
   return {

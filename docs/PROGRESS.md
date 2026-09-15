@@ -21,6 +21,121 @@
 
 ---
 
+## 2026-09-15 (追加作業2: Spot Discoveryのルート沿い検索・Google Routes再計算・時間予算の非ブロッキング化・日記保存の確実性向上)
+
+`feature/100-program-finalization` ブランチで、100 Program完成版の最終実機テスト前に、Spot Discoveryについて残っていた指摘2点(+関連する時間予算・日記保存の調整)を修正した(commit・pushは未実施)。
+
+### 完了したこと
+
+- 寄り道スポット探索を「ルート沿い」の検索に変更
+  - `services/spot/google-places-spot-provider.ts`に`sampleRouteAnchors()`を追加。選択中ルートのPolyline(`route.path`)から25%/50%/75%地点の実座標を検索アンカーとして使い、目的地・出発地点付近だけに検索が偏らないようにした
+  - 1カテゴリにつき最大3回(アンカー数ぶん)のGoogle Places検索に抑え、取得結果はPlace IDで重複除外、表示件数は`MAX_RESULTS_PER_CATEGORY`(8件)に制限
+  - `services/spot/spot-provider.ts`の`SpotSearchParams`を`preferredCategory?`(2カテゴリ一括取得)から`category`(1カテゴリ必須)へ変更し、1回のAPI呼び出しは常に1カテゴリだけを対象にするよう単純化
+- カテゴリチップのオンデマンド検索
+  - `app/spot-discovery.tsx`に`ensureCategoryLoaded()`を追加。初回表示時は現在選択中のチップ(既定は「おすすめ」)だけを自動取得し、それ以外のチップは実際にタップされた時点で未取得なら検索する。取得済み/取得中はルート単位で`fetchedCategoriesRef`/`inFlightCategoriesRef`が管理し、同じカテゴリを重複取得しない
+  - `contexts/drive-flow-context.tsx`の`initializeSpotDiscovery`を「置き換え」から「マージ(既存spotsへの追加)」へ変更し、カテゴリを追加取得しても既存の選択・表示が失われないようにした
+  - API失敗時はモックへフォールバックせず、全アンカー失敗時のみ「検索に失敗しました」の非全画面ブロッキングな案内(初回のみ全画面)を表示する
+- 選択スポット追加後のGoogle Routes再計算
+  - `services/route/google-routes-client.ts`(再作成)・`services/spot/spot-route-recalculation.ts`(新規)を追加し、既存のdeploy済みSupabase Edge Function(`google-routes`)を使って、出発地点→ユーザー指定の経由地点→drive-route-plannerの提案スポット→選択した寄り道スポット→目的地(ループなら出発地点)の順で実際の道路ルートを再計算するようにした
+  - `app/route-plan.tsx`にこの再計算をuseFocusEffectで組み込み、成功時はPolyline・距離・所要時間を実測値へ更新(`recalculatedPlan`)、失敗時は既存のHaversine見積もり(`estimatedPlan`)へ後退して画面を止めない
+  - Google Maps外部ナビへ渡すwaypoint順(`navWaypoints`)は、再計算に使うwaypoint順と完全に一致させている(Google Maps側で道路線自体が再計算される既知制約は維持)
+- 時間予算を非ブロッキング化
+  - `app/spot-discovery.tsx`の寄るところ追加・「寄り道を確認する」ボタンから、時間予算超過時のブロック(選択拒否・ボタン無効化)をすべて撤去し、`services/spot/spot-route-plan.ts`のメッセージ文言も「この寄り道をすると目安時間を約◯分超えそうです」という非ブロッキングの案内へ統一した
+  - `app/route-plan.tsx`は元々「この内容で決定」「Google Mapsでナビする」「アプリ内で記録」を時間超過でブロックしていなかったため、実測値ベースの同じ警告文言(`plan.budgetMessage`)を表示するよう整合を取った
+- 日記保存の確実性向上
+  - `contexts/drive-flow-context.tsx`の`addDiaryEntry`を`Promise<boolean>`を返す非同期関数へ変更し、AsyncStorageへの書き込み完了までawaitできるようにした(同じidでの再保存はupsertし、重複エントリを作らない)
+  - `app/drive-diary-create.tsx`の「日記を保存」を、書き込み完了をawaitしてから確認画面へ遷移するよう変更。保存中はボタンを「保存しています…」に変えて連打を防ぎ、保存失敗時はエラーメッセージを表示して確認画面へは進まないようにした
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`: いずれもエラーなし
+- Supabase Edge Function(`google-routes`・`google-places`)は今回無変更(`git diff`で確認済み)のため再deployせず
+- `app/drive-recording.tsx`・下部タブ(`app/(tabs)/`)・`services/trip/*`は今回無変更(`git diff --stat`で確認済み)
+
+### 未完了
+
+- iPhone実機での最終確認(ルート沿い検索・オンデマンドカテゴリ取得・Google Routes再計算・時間超過時の非ブロッキング挙動・日記保存の確実性)はユーザー側で実施予定
+
+### 次にやること
+
+- iPhone実機確認後、フィードバックに応じて調整
+
+---
+
+## 2026-09-15 (追加作業: Spot Discovery実データ化・日記永続化)
+
+`feature/100-program-finalization` ブランチで、100 Program完成版の総合実機確認前に残っていた「ユーザーから見てモック/再起動で消えるデータ」の2点を仕上げた(commit・pushは未実施)。
+
+### 完了したこと
+
+- 寄り道スポット探索画面(`app/spot-discovery.tsx`)を実Google Placesデータへ置き換え
+  - `services/spot/google-places-client.ts`(新規): Supabase Edge Function(`google-places`)へのfetchクライアント。`EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`/`getInstallId()`を再利用し、Expoから直接Google Places APIは呼ばない。応答は実行時に形状検証し、1件でも壊れていれば応答全体を`invalid_response`として拒否する
+  - `services/spot/google-places-spot-provider.ts`(全面書き換え): `resolvePreferredSpotCategory()`でAI解釈の`desiredStops`先頭優先・無ければ`scenic`を選び、この優先カテゴリ+`scenic`の最大2カテゴリを検索。立ち寄り追加時間・距離は、ルート終端の実座標とスポットの実座標のhaversine距離を往復とみなした見積もり(`services/location/coordinates.ts`の`haversineDistanceKm`を再利用、追加のGoogle Routes呼び出しはしない)
+  - `services/spot/index.ts`を更新し、`getSpotProvider()`が`GooglePlacesSpotProvider`を返すよう変更(`MockSpotProvider`は残すが呼ばない)
+  - 実在スポット(`isMock: false`)を通すためのブロッカーを3箇所修正: `types/spot.ts`の`Spot.isMock`を`true`固定の型から`boolean`へ、`contexts/drive-flow-context.tsx`の`initializeSpotDiscovery`が`isMock`スポットのみ通していたフィルタを削除、`services/spot/spot-route-plan.ts`の`calculateSpotRoutePlan`が「全スポットがモックであること」を要求していたバリデーションを削除
+  - `app/spot-discovery.tsx`のモック専用UI文言(マーカー説明文の「・モック」固定表示、ヘッダーの「すべて架空のモックデータです」、カードの「モック」バッジ、口コミ導線の「将来は実在スポットに接続後」という文言)を、`spot.isMock`に応じた条件表示・実データ前提の文言に更新
+  - 選択したスポットの実座標は、既存の`app/route-plan.tsx`のGoogle Mapsナビ導線(`selectedSpots.map((spot) => spot.coordinates)`)がそのまま使うため、この画面自体への追加変更は不要だった
+- ドライブ日記のローカル永続化
+  - `services/diary/diary-store.ts`(新規): `services/trip/trip-store.ts`と同じパターン(schema version付きJSON、AsyncStorage、壊れたデータは安全に空へフォールバック)。`getDiaryEntries()`/`getDiaryEntry()`/`saveDiaryEntry()`(upsert)/`deleteDiaryEntry()`を実装。ストレージキーは`drive-discovery.diary.v1`。`types/drive-diary.ts`自体は無変更
+  - `contexts/drive-flow-context.tsx`の`DriveFlowProvider`起動時に`getDiaryEntries()`で永続化済みの日記を読み込み`diaryEntries`へ反映するeffectを追加。`addDiaryEntry()`にfire-and-forgetの`saveDiaryEntry()`呼び出しを追加(in-memory更新は従来通り即時)
+  - 日記タブ・ホームのプレビュー・日記詳細・日記共有はすべて既存通り`diaryEntries`(Context)を参照するだけのため、画面側の追加変更は不要だった
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`: いずれもエラーなし
+- `app/route-plan.tsx`のナビ導線が`selectedSpots.map((spot) => spot.coordinates)`を使っていることをコードで確認し、実スポットの座標がGoogle Mapsナビへそのまま渡ることを確認した
+- 日記関連画面(`(tabs)/diary.tsx`、`(tabs)/index.tsx`、`diary-detail.tsx`、`drive-diary-confirm.tsx`、`drive-diary-share.tsx`)がすべて`useDriveFlow().diaryEntries`のみを参照していることを`grep`で確認し、永続化の変更が画面側の追加改修なしで反映されることを確認した
+- Supabase Edge Function(`google-places`)は今回無変更のため再deployしていない
+
+### 未完了
+
+- iPhone実機での最終確認(寄り道スポット探索画面での実在スポット表示、API失敗時の非フォールバック、日記のアプリ完全終了→再起動後の保持)はユーザー側で実施予定
+- 日記と旅行プランのtripId連携は今回スコープ外のまま(ユーザー指示により見送り)
+
+### 次にやること
+
+- iPhone実機確認後、フィードバックに応じて調整
+
+---
+
+## 2026-09-15
+
+`feature/100-program-finalization` ブランチで、100 Program版としての完成範囲(下部ナビ・旅行プラン・既存機能の統合)を一連で実装した(commit・pushは未実施)。
+
+### 完了したこと
+
+- 下部ナビ(ホーム/日記/今すぐドライブ/旅行プラン/プロフィール)をexpo-routerの`(tabs)`グループ+`Tabs`で追加。中央の「今すぐドライブ」はタブ押下を横取りし、既存の`resetPlanningSession()`→`/departure`の導線へ直接進む(タブ画面自体は保険用フォールバックのみ)
+- `app/index.tsx`を`app/(tabs)/index.tsx`へ移動し、最近の日記・保存中の旅行プランのプレビューを追加したホーム画面に更新
+- 旅行プラン機能を新規実装: `types/trip.ts`(Trip/TripDay、既存のDriveConditions/RouteOption/AiRoutePreferencesを再利用)、`services/trip/trip-store.ts`(AsyncStorageによるローカル永続化、schema version・runtime validation・壊れたJSONへのfallback付き)
+- 旅行プラン画面: 一覧(`(tabs)/trips.tsx`、新規作成/開く/削除)、作成(`trip-create.tsx`、日程からDay1/2/3を自動生成)、詳細(`trip-detail.tsx`)、日次詳細(`trip-day-detail.tsx`、既存の条件入力ウィザード・drive-route-plannerへ橋渡し)
+- `DriveFlowContext`に`activeTripDay`(旅行日から計画中かを示す)・`selectDiaryEntry()`(日記タブから任意の過去日記を開く)を追加。`resetPlanningSession()`で`activeTripDay`を必ずクリア、`beginConditionsEdit()`では維持(同じ旅行日の編集を継続するため)
+- `app/route-plan.tsx`の「この内容で決定」成功時、`activeTripDay`が設定されていればそのままdrive-route-plannerの結果(生成ルート・選択ルート・使用した条件)を`updateTripDay()`で該当日へ保存
+- 日記タブ(`(tabs)/diary.tsx`)・日記詳細(`diary-detail.tsx`、既存のDriveDiaryEntryモデル・selectDiaryEntry()をそのまま再利用、drive-diary-confirm.tsx自体は無改修)を新設
+- プロフィールタブ(`(tabs)/profile.tsx`)をローカル設定のみ(自宅地点の登録/変更/削除、アプリについて、データ/プライバシーについて)で新設。ログイン・アカウント情報は一切表示しない
+- `@react-native-async-storage/async-storage`を`npx expo install`で追加(旅行プランの永続化用。installId等の秘密値は引き続きexpo-secure-storeのまま)
+- 不要になったクライアント側の旧コードを削除: `services/route/google-routes-client.ts`・`google-route-mapper.ts`(drive-route-plannerに統合済みで無参照)、`services/route/google-routes-provider.ts`(未実装のまま放置されていたRouteProviderスタブ、実際のGoogle Routes統合は別経路で完成済みのため削除)。`services/route/index.ts`・`route-provider.ts`のコメントも実状に合わせて更新
+- `components/ui/primary-button.tsx`・`selection-card.tsx`に`accessibilityRole`/`accessibilityLabel`/`accessibilityState`を追加(既存の全画面へ後方互換のまま適用される)
+- Google Mapsナビ・GPS記録・日記・共有・スポット探索・AI解釈・drive-route-planner本体はコードレベルで無変更(既存動作を維持)
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`: いずれもエラーなし
+- Supabase Edge Function(`drive-route-planner`)は今回無変更のため再deployせず、既存deploy済みのものに対して60分ループのスモークテスト(56.9/63.1/66.8分)を実行し、正常応答を再確認
+- `google-routes-client.ts`等の削除対象ファイルは、削除前に`grep`でアプリ全体から無参照であることを確認済み
+
+### 未完了
+
+- iPhone実機での総合確認(下部ナビの操作感・safe area/Home Indicator、旅行プラン作成〜Day1/2/3のルート生成〜アプリ再起動後の保持〜Google Mapsナビ、既存のGPS記録/日記/共有フローとの統合)はユーザー側で実施予定
+- 旅行日の条件は「気分(mood)」を保存していない(TripDayの型に含めていないため、日を再編集すると気分は毎回未選択に戻る)
+- 旅行日の出発地点・目的地・使える時間等は、実際にルートを決定するまでローカルに保存されない(途中経過の自動保存は今回のスコープ外)
+
+### 次にやること
+
+- iPhone実機確認後、フィードバックに応じて調整
+- UI/UXの統一(余白・typography等)は今回は新規画面を既存トークンに合わせる範囲に留めたため、既存画面全体の横断的な見直しが必要なら別タスクとして計画する
+
+---
+
 ## 2026-09-06
 
 `feature/ai-route-planning` ブランチで、既にdeploy済みのSupabase Edge Function `ai-route-planning` を、`app/conditions.tsx` の条件入力ウィザードへ接続した(commit・pushは未実施、ユーザー指示によりこのセッションでは行わない)。

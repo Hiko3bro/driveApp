@@ -13,7 +13,7 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <DriveFlowProvider>
         <Stack>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="departure" options={{ title: '出発地点を選ぶ' }} />
           <Stack.Screen name="conditions" options={{ headerShown: false }} />
           <Stack.Screen name="route-compare" options={{ title: 'ルートを比較する' }} />
@@ -25,6 +25,10 @@ export default function RootLayout() {
           <Stack.Screen name="drive-diary-create" options={{ title: '日記作成' }} />
           <Stack.Screen name="drive-diary-confirm" options={{ title: '日記確認' }} />
           <Stack.Screen name="drive-diary-share" options={{ title: '共有する' }} />
+          <Stack.Screen name="diary-detail" options={{ title: '日記' }} />
+          <Stack.Screen name="trip-create" options={{ title: '旅行プランを作る' }} />
+          <Stack.Screen name="trip-detail" options={{ title: '旅行プラン' }} />
+          <Stack.Screen name="trip-day-detail" options={{ title: 'この日の予定' }} />
         </Stack>
       </DriveFlowProvider>
       <StatusBar style="auto" />

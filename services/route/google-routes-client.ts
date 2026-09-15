@@ -3,34 +3,37 @@ import type { Coordinates } from '@/types/location';
 
 /**
  * Supabase Edge Function `google-routes` の1回のfetch試行あたりのタイムアウトは
- * サーバー側で8秒、失敗時は最大1回リトライ(300msのbackoff)する実装になっている。
- * クライアント側はその最悪ケース(約8秒+300ms+約8秒)を上回る値をタイムアウトにし、
- * クライアント側での自動リトライは行わない(サーバー側で既に最大1回リトライ済みのため)。
+ * サーバー側で8秒、失敗時は最大1回リトライする実装になっている。クライアント側は
+ * その最悪ケースを上回る値をタイムアウトにし、クライアント側での自動リトライは
+ * 行わない(サーバー側で既に最大1回リトライ済みのため)。
  */
-const CLIENT_TIMEOUT_MS = 20_000;
+const CLIENT_TIMEOUT_MS = 18_000;
 
-/** Edge Function側(google-routes/route-types.ts)のMAX_INTERMEDIATESと合わせる。 */
-const MAX_INTERMEDIATES = 10;
+export interface GoogleRoutesRequestInput {
+  origin: Coordinates;
+  destination: Coordinates;
+  /** origin→destinationの間を通す経由地点(順序を維持)。 */
+  intermediates?: Coordinates[];
+  avoidHighways?: boolean;
+}
 
-export interface GoogleRouteCandidate {
+/** アプリへ返す正規化済みのルート候補。Googleの生レスポンス形状への依存をアプリ側へ広げない。 */
+export interface RouteCandidate {
   distanceMeters: number;
   durationSeconds: number;
   encodedPolyline: string;
   routeLabels: string[];
 }
 
-export interface GoogleRoutesRequestInput {
-  origin: Coordinates;
-  destination: Coordinates;
-  /** 実際にユーザーが指定した経由地点の座標のみ。捏造した座標は渡さない。 */
-  intermediates?: Coordinates[];
-  avoidHighways?: boolean;
-}
-
-export type GoogleRoutesFailureReason = 'config_missing' | 'network' | 'timeout' | 'http_error' | 'invalid_response';
+export type GoogleRoutesFailureReason =
+  | 'config_missing'
+  | 'network'
+  | 'timeout'
+  | 'http_error'
+  | 'invalid_response';
 
 export type GoogleRoutesOutcome =
-  | { ok: true; routes: GoogleRouteCandidate[] }
+  | { ok: true; routes: RouteCandidate[] }
   | { ok: false; reason: GoogleRoutesFailureReason };
 
 function getSupabaseConfig(): { url: string; publishableKey: string } | null {
@@ -51,14 +54,16 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /** サーバー応答を無条件に信頼せず、実行時に最低限の型・形状を検証する。想定外の形はnullにする(例外を投げない)。 */
-function parseRouteCandidate(value: unknown): GoogleRouteCandidate | null {
+function parseRouteCandidate(value: unknown): RouteCandidate | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
   const record = value as Record<string, unknown>;
   if (
     !isFiniteNumber(record.distanceMeters) ||
+    record.distanceMeters < 0 ||
     !isFiniteNumber(record.durationSeconds) ||
+    record.durationSeconds < 0 ||
     typeof record.encodedPolyline !== 'string' ||
     record.encodedPolyline.length === 0 ||
     !isStringArray(record.routeLabels)
@@ -73,7 +78,7 @@ function parseRouteCandidate(value: unknown): GoogleRouteCandidate | null {
   };
 }
 
-function parseGoogleRoutesResponse(value: unknown): GoogleRouteCandidate[] | null {
+function parseRoutesResponse(value: unknown): RouteCandidate[] | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
@@ -86,7 +91,7 @@ function parseGoogleRoutesResponse(value: unknown): GoogleRouteCandidate[] | nul
     return null;
   }
 
-  const routes: GoogleRouteCandidate[] = [];
+  const routes: RouteCandidate[] = [];
   for (const item of data.routes) {
     const parsed = parseRouteCandidate(item);
     // 1件でも想定外の形なら、応答全体を不正として扱う(壊れた候補を黙って混ぜない)。
@@ -100,14 +105,12 @@ function parseGoogleRoutesResponse(value: unknown): GoogleRouteCandidate[] | nul
 
 /**
  * Expo → Supabase Edge Function(google-routes) → Google Routes API という経路のみを使う。
- * Expoアプリから直接Google Routes APIを呼び出すことはない。GOOGLE_ROUTES_API_KEY等の
- * サーバー側秘密情報もここには一切登場しない(publishable keyのみを使う)。
+ * Expoから直接Google Routes APIを呼び出すことはない。
  */
-export async function requestGoogleRoutes(input: GoogleRoutesRequestInput): Promise<GoogleRoutesOutcome> {
+export async function computeGoogleRoute(input: GoogleRoutesRequestInput): Promise<GoogleRoutesOutcome> {
   const config = getSupabaseConfig();
   if (!config) {
     if (__DEV__) {
-      // 開発時の設定ミスを分かりやすくするためのログ。秘密値は一切含めない。
       console.warn(
         '[google-routes-client] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY が未設定です。.envを確認してください。'
       );
@@ -124,7 +127,7 @@ export async function requestGoogleRoutes(input: GoogleRoutesRequestInput): Prom
     destination: input.destination,
   };
   if (input.intermediates && input.intermediates.length > 0) {
-    body.intermediates = input.intermediates.slice(0, MAX_INTERMEDIATES);
+    body.intermediates = input.intermediates;
   }
   if (input.avoidHighways) {
     body.avoidHighways = true;
@@ -147,7 +150,7 @@ export async function requestGoogleRoutes(input: GoogleRoutesRequestInput): Prom
     }
 
     const json: unknown = await response.json();
-    const routes = parseGoogleRoutesResponse(json);
+    const routes = parseRoutesResponse(json);
     if (!routes) {
       return { ok: false, reason: 'invalid_response' };
     }

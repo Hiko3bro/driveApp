@@ -36,6 +36,7 @@ export default function DriveDiaryCreateScreen() {
   const [isPickingPhotos, setIsPickingPhotos] = useState(false);
   const [photoNotice, setPhotoNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const savingInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -78,7 +79,10 @@ export default function DriveDiaryCreateScreen() {
     setPhotos((prev) => prev.filter((photo) => photo.id !== photoId));
   };
 
-  const handleSave = () => {
+  // 保存ボタン→確認画面遷移は、ユーザーが「保存完了」と認識する操作のため、
+  // AsyncStorageへの書き込みが終わるまでawaitしてから遷移する。書き込み完了前に
+  // 画面遷移・アプリ終了してしまうと保存が失われるリスクがあるため。
+  const handleSave = async () => {
     if (savingInFlightRef.current) {
       return;
     }
@@ -95,6 +99,7 @@ export default function DriveDiaryCreateScreen() {
 
     savingInFlightRef.current = true;
     setSaveError(null);
+    setIsSaving(true);
 
     const entry: DriveDiaryEntry = {
       id: createDiaryEntryId(),
@@ -111,7 +116,14 @@ export default function DriveDiaryCreateScreen() {
       createdAt: Date.now(),
     };
 
-    addDiaryEntry(entry);
+    const persisted = await addDiaryEntry(entry);
+    if (!persisted) {
+      savingInFlightRef.current = false;
+      setIsSaving(false);
+      setSaveError('日記を端末に保存できませんでした。もう一度お試しください。');
+      return;
+    }
+
     router.replace('/drive-diary-confirm');
   };
 
@@ -212,7 +224,11 @@ export default function DriveDiaryCreateScreen() {
 
       <View style={styles.footer}>
         {saveError && <Text style={styles.errorText}>{saveError}</Text>}
-        <PrimaryButton label="日記を保存" onPress={handleSave} />
+        <PrimaryButton
+          label={isSaving ? '保存しています…' : '日記を保存'}
+          onPress={handleSave}
+          disabled={isSaving}
+        />
       </View>
     </SafeAreaView>
   );

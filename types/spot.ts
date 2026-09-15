@@ -23,8 +23,8 @@ export interface Spot {
   extraDistanceKm: number;
   coordinates: Coordinates;
   recommendation: string;
-  /** 外部の実在スポットではなく、安全なモックデータであることを示す。 */
-  isMock: true;
+  /** true: テスト・デモ用のモックデータ。false: Google Placesが返した実在スポット。 */
+  isMock: boolean;
 }
 
 export interface SpotRoutePlan {
