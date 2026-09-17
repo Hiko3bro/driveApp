@@ -1,9 +1,15 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { SelectionCard } from '@/components/ui/selection-card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
+import { formatMinutesLabel } from '@/types/drive';
+import type { DriveDiaryEntry } from '@/types/drive-diary';
 
 /**
  * 保存済み日記の一覧タブ。既存の日記データモデル(DriveDiaryEntry、
@@ -25,57 +31,112 @@ export default function DiaryTabScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>日記</Text>
         {sortedEntries.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>まだ日記がありません</Text>
-            <Text style={styles.emptyText}>
-              ドライブを記録して日記を作成すると、ここに一覧で表示されます。
-            </Text>
-          </View>
+          <EmptyState
+            icon="book-outline"
+            message={'まだドライブ記録がありません\nドライブを記録して日記を作成すると、ここに残ります'}
+          />
         ) : (
-          sortedEntries.map((entry) => (
-            <SelectionCard
-              key={entry.id}
-              title={entry.title}
-              subtitle={`${entry.date} ・ ${entry.distanceKm}km ・ ${entry.route.name}`}
-              onPress={() => handleOpen(entry.id)}
-            />
-          ))
+          <View style={styles.list}>
+            {sortedEntries.map((entry) => (
+              <DiaryCard key={entry.id} entry={entry} onPress={() => handleOpen(entry.id)} />
+            ))}
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function DiaryCard({ entry, onPress }: { entry: DriveDiaryEntry; onPress: () => void }) {
+  const coverPhoto = entry.photos[0];
+  const durationMinutes = Math.round(entry.durationSeconds / 60);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${entry.title}。${entry.date}の日記を開く`}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
+      <View style={styles.thumbnail}>
+        {coverPhoto ? (
+          <Image source={{ uri: coverPhoto.uri }} style={styles.thumbnailImage} contentFit="cover" />
+        ) : (
+          <Ionicons name="map-outline" size={22} color={Colors.textTertiary} />
+        )}
+      </View>
+      <View style={styles.cardBody}>
+        <Text style={styles.cardDate}>{entry.date}</Text>
+        <Text style={styles.cardTitle} numberOfLines={1}>
+          {entry.title}
+        </Text>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {entry.route.name} ・ {formatDistanceLabel(entry.distanceKm)} ・ {formatMinutesLabel(durationMinutes)}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 20,
+    padding: Spacing.xl,
+    paddingTop: Spacing.md,
   },
   title: {
-    fontSize: 22,
+    fontSize: Typography.screenTitle.fontSize - 6,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 20,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.lg,
   },
-  emptyState: {
+  list: {
+    gap: Spacing.md,
+  },
+  card: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 48,
-    gap: 8,
+    gap: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.md,
   },
-  emptyTitle: {
-    fontSize: 15,
+  cardPressed: {
+    opacity: 0.85,
+  },
+  thumbnail: {
+    width: 56,
+    height: 56,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cardBody: {
+    flex: 1,
+    gap: 2,
+  },
+  cardDate: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textTertiary,
+    fontWeight: '600',
+  },
+  cardTitle: {
+    fontSize: Typography.cardTitle.fontSize,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
-  emptyText: {
-    fontSize: 13,
-    color: '#8b959c',
-    textAlign: 'center',
-    lineHeight: 19,
+  cardMeta: {
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
   },
 });

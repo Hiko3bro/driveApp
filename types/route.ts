@@ -5,6 +5,20 @@ export interface RouteWaypoint {
   coordinates: Coordinates;
 }
 
+/**
+ * ルート自体を変えるほどではない(=基本ルートがほぼ同じ)実在スポット。別ルートとして
+ * 水増しする代わりに、このルートの「近くのおすすめ」として提示する
+ * (Route diversityとOptional spot diversityの分離)。
+ */
+export interface RouteNearbySuggestion {
+  id: string;
+  name: string;
+  coordinates: Coordinates;
+  primaryType: string | null;
+  /** このスポットへ寄った場合の、このルートの所要時間からの増加分(分、整数)。 */
+  addedMinutes: number;
+}
+
 export interface RouteOption {
   id: string;
   name: string;
@@ -34,4 +48,8 @@ export interface RouteOption {
   targetDurationMinutes?: number;
   /** このルートの実測にavoidHighwaysが適用されたかどうか(外部ナビURL組み立て用)。 */
   avoidHighwaysApplied?: boolean;
+  /** このルートの近くにある、別ルートにするほどではない実在スポット(あれば)。 */
+  nearbySuggestions?: RouteNearbySuggestion[];
+  /** UI文言選択用(例:「海沿いを通りやすいコース」)。現状'coastal'のみ。 */
+  corridorTheme?: 'coastal';
 }

@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MapPointPicker } from '@/components/location/map-point-picker';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { DEMO_MAP_REGION } from '@/services/location/coordinates';
 import { clearHomeLocation, getHomeLocation, saveHomeLocation } from '@/services/location/home-location-store';
 import type { Coordinates, MapRegion } from '@/types/location';
@@ -124,49 +125,47 @@ export default function ProfileTabScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 20,
-    gap: 20,
+    padding: Spacing.xl,
+    paddingTop: Spacing.md,
+    gap: Spacing.xl - 4,
   },
   title: {
-    fontSize: 22,
+    fontSize: Typography.screenTitle.fontSize - 6,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   section: {
-    gap: 10,
+    gap: Spacing.sm,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#11181C',
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
   },
   card: {
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 16,
-    gap: 8,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    gap: Spacing.sm,
   },
   cardText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   cardHint: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 19,
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   buttonRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 4,
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
   },
 });

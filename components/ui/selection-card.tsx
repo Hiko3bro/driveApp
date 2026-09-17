@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
+
 interface SelectionCardProps {
   title: string;
   subtitle: string;
@@ -31,13 +33,11 @@ export function SelectionCard({ title, subtitle, onPress, disabled }: SelectionC
 const styles = StyleSheet.create({
   card: {
     minHeight: 64,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 16,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: Spacing.md,
   },
   disabled: {
     opacity: 0.5,
@@ -46,13 +46,13 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   title: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 4,
+    fontSize: Typography.cardTitle.fontSize,
+    fontWeight: Typography.cardTitle.fontWeight,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   subtitle: {
-    fontSize: 13,
-    color: '#5b6770',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
   },
 });

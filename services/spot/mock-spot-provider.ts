@@ -206,6 +206,7 @@ export class MockSpotProvider implements SpotProvider {
           extraDistanceKm: template.extraDistanceKm,
           coordinates,
           isMock: true as const,
+          photoRef: null,
         },
       ];
     });

@@ -65,19 +65,23 @@ export function calculateSpotRoutePlan(
   const durationMinutes = route.durationMinutes + spots.reduce((sum, spot) => sum + spot.extraMinutes, 0);
   const distanceKm = route.distanceKm + spots.reduce((sum, spot) => sum + spot.extraDistanceKm, 0);
   const budget = resolveEffectiveTimeBudget(conditions, now);
-  const isWithinBudget = budget.ok && durationMinutes <= budget.minutes;
-  const budgetMessage = budget.ok
-    ? isWithinBudget
-      ? null
-      : `この寄り道をすると目安時間を約${Math.ceil(durationMinutes) - budget.minutes}分超えそうです。`
-    : budget.message;
+  // budget.minutesがundefined(=時間指定なし)の場合は、超過しようのない状態として扱う。
+  const isWithinBudget = budget.ok && (budget.minutes === undefined || durationMinutes <= budget.minutes);
+  let budgetMessage: string | null;
+  if (!budget.ok) {
+    budgetMessage = budget.message;
+  } else if (budget.minutes === undefined || isWithinBudget) {
+    budgetMessage = null;
+  } else {
+    budgetMessage = `この寄り道をすると目安時間を約${Math.ceil(durationMinutes) - budget.minutes}分超えそうです。`;
+  }
 
   return {
     routeId: route.id,
     selectedSpotIds: ids,
     distanceKm: Math.round(distanceKm * 10) / 10,
     durationMinutes: Math.ceil(durationMinutes),
-    timeBudgetMinutes: budget.ok ? budget.minutes : null,
+    timeBudgetMinutes: budget.ok ? budget.minutes ?? null : null,
     isWithinBudget,
     budgetMessage,
     path: buildUpdatedPath(route.path, spots),

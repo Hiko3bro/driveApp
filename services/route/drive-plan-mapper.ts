@@ -1,4 +1,4 @@
-import type { DrivePlan, DrivePlanMeta } from '@/services/route/drive-route-planner-client';
+import type { DrivePlan, DrivePlanMeta, DrivePlanSuggestedPlace } from '@/services/route/drive-route-planner-client';
 import { decodeGooglePolyline } from '@/services/route/polyline';
 import type { Coordinates } from '@/types/location';
 import type { RouteOption, RouteWaypoint } from '@/types/route';
@@ -12,11 +12,19 @@ export interface DrivePlanMapperContext {
   avoidHighwaysApplied: boolean;
 }
 
+/** suggestedPlaces(複数、corridor型プラン用)を優先し、無ければ従来のsuggestedPlace(単数)を1件配列として扱う。 */
+function resolveSuggestedPlaces(plan: DrivePlan): DrivePlanSuggestedPlace[] {
+  if (plan.suggestedPlaces && plan.suggestedPlaces.length > 0) {
+    return plan.suggestedPlaces;
+  }
+  return plan.suggestedPlace ? [plan.suggestedPlace] : [];
+}
+
 /**
  * markerの並び順。将来の外部ナビ連携(Google Maps等)で
- * origin → userViaPoints → suggestedPlace → destination(またはorigin)
+ * origin → userViaPoints → suggestedPlace(複数の場合は順に) → destination(またはorigin)
  * という順序をそのまま使えるよう、waypoints配列自体をこの順序で構築する。
- * suggestedPlaceは実際にGoogle Routesのintermediatesへ含めて計測した候補
+ * suggestedPlace(s)は実際にGoogle Routesのintermediatesへ含めて計測した候補
  * (plan-builder.ts参照)なので、Polylineが実際にこの地点を通っている。
  */
 function buildWaypoints(plan: DrivePlan, context: DrivePlanMapperContext, path: Coordinates[]): RouteWaypoint[] {
@@ -25,10 +33,10 @@ function buildWaypoints(plan: DrivePlan, context: DrivePlanMapperContext, path: 
     coordinates: point.coordinates,
   }));
 
-  if (plan.suggestedPlace) {
+  for (const place of resolveSuggestedPlaces(plan)) {
     waypoints.push({
-      name: plan.suggestedPlace.name,
-      coordinates: { latitude: plan.suggestedPlace.latitude, longitude: plan.suggestedPlace.longitude },
+      name: place.name,
+      coordinates: { latitude: place.latitude, longitude: place.longitude },
     });
   }
 
@@ -41,10 +49,20 @@ function buildWaypoints(plan: DrivePlan, context: DrivePlanMapperContext, path: 
 }
 
 function buildHighlight(plan: DrivePlan, context: DrivePlanMapperContext): string {
-  if (plan.suggestedPlace) {
+  const places = resolveSuggestedPlaces(plan);
+
+  if (plan.corridorTheme === 'coastal' && places.length > 0) {
+    const names = places.map((place) => place.name).join('・');
     return context.destinationLabel
-      ? `${plan.suggestedPlace.name}に寄って、${context.destinationLabel}へ向かう実際のルートです。`
-      : `${plan.suggestedPlace.name}に寄って戻る実際のルートです。`;
+      ? `${names}など海沿いの地点をつないで、${context.destinationLabel}へ向かう実際のルートです。`
+      : `${names}など海沿いの地点をつないで戻る実際のルートです。`;
+  }
+
+  if (places.length > 0) {
+    const names = places.map((place) => place.name).join('・');
+    return context.destinationLabel
+      ? `${names}に寄って、${context.destinationLabel}へ向かう実際のルートです。`
+      : `${names}に寄って戻る実際のルートです。`;
   }
   return context.destinationLabel
     ? `${context.departureLabel}から${context.destinationLabel}までの実際のルートです。`
@@ -52,6 +70,9 @@ function buildHighlight(plan: DrivePlan, context: DrivePlanMapperContext): strin
 }
 
 function buildName(index: number, plan: DrivePlan): string {
+  if (plan.corridorTheme === 'coastal') {
+    return '海沿いを通りやすいコース';
+  }
   if (plan.suggestedPlace) {
     return `${plan.suggestedPlace.name}に寄るルート`;
   }
@@ -81,7 +102,9 @@ export function buildRouteOptionsFromDrivePlans(
     if (context.avoidHighwaysApplied) {
       tags.push('高速道路を避ける');
     }
-    if (plan.suggestedPlace) {
+    if (plan.corridorTheme === 'coastal') {
+      tags.push('海沿い');
+    } else if (plan.suggestedPlace) {
       tags.push('提案スポットあり');
     }
 
@@ -95,7 +118,12 @@ export function buildRouteOptionsFromDrivePlans(
       waypoints: buildWaypoints(plan, context, path),
       path,
       highlight: buildHighlight(plan, context),
-      audience: plan.suggestedPlace ? '実在のスポットにも寄りたい人向け' : '実際の道路状況に沿って移動したい人向け',
+      audience:
+        plan.corridorTheme === 'coastal'
+          ? '海沿いの景色を楽しみたい人向け'
+          : plan.suggestedPlace
+            ? '実在のスポットにも寄りたい人向け'
+            : '実際の道路状況に沿って移動したい人向け',
       source: 'google',
       suggestedPlace: plan.suggestedPlace
         ? {
@@ -108,6 +136,14 @@ export function buildRouteOptionsFromDrivePlans(
       warning: plan.warning,
       targetDurationMinutes: meta.availableTimeMinutes,
       avoidHighwaysApplied: context.avoidHighwaysApplied,
+      nearbySuggestions: plan.nearbySuggestions?.map((suggestion) => ({
+        id: suggestion.id,
+        name: suggestion.name,
+        coordinates: { latitude: suggestion.latitude, longitude: suggestion.longitude },
+        primaryType: suggestion.primaryType,
+        addedMinutes: suggestion.addedMinutes,
+      })),
+      corridorTheme: plan.corridorTheme,
     });
   });
 

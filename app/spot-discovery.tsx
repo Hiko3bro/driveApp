@@ -2,7 +2,6 @@ import { useFocusEffect } from 'expo-router/react-navigation';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,10 +14,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DriveMapView, type DriveMapViewHandle, type MapMarkerSpec } from '@/components/map/drive-map-view';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState } from '@/components/ui/loading-state';
 import { OptionChip } from '@/components/ui/option-chip';
+import { PlaceActionButtons } from '@/components/ui/place-action-buttons';
+import { PlacePhotoHero } from '@/components/ui/place-photo-hero';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION, isValidMapRegion } from '@/services/location/coordinates';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
+import { buildGoogleMapsPlaceUrl, buildWebSearchUrl, openExternalUrl } from '@/services/navigation/google-maps-view';
 import { computeRegionForPath } from '@/services/location/route-map-region';
 import {
   getSpotProvider,
@@ -28,6 +34,7 @@ import {
   type PlaceSearchCategory,
 } from '@/services/spot';
 import { calculateSpotRoutePlan, SpotRoutePlanError } from '@/services/spot/spot-route-plan';
+import { formatMinutesLabel } from '@/types/drive';
 import type { MapRegion } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 import {
@@ -77,6 +84,7 @@ export default function SpotDiscoveryScreen() {
     selectedSpotIds,
     initializeSpotDiscovery,
     setSelectedSpotId,
+    clearSelectedSpotId,
     setSelectedSpotIds,
     aiInterpretation,
   } = useDriveFlow();
@@ -152,7 +160,9 @@ export default function SpotDiscoveryScreen() {
     (filter: SpotBrowseFilter): PlaceSearchCategory =>
       filter === 'おすすめ'
         ? resolvePreferredSpotCategory(aiInterpretation?.preferences)
-        : SPOT_CATEGORY_TO_PLACE_CATEGORY[filter],
+        : // SPOT_BROWSE_FILTERSは今すぐドライブ側の5カテゴリだけを含むため、このキャストは安全
+          // (ドライブ計画専用に追加した'歴史'/'市場'はこの画面のチップには出てこない)。
+          (SPOT_CATEGORY_TO_PLACE_CATEGORY[filter] as PlaceSearchCategory),
     [aiInterpretation]
   );
 
@@ -336,6 +346,13 @@ export default function SpotDiscoveryScreen() {
     ]
   );
 
+  const handleDeselectSpot = useCallback(() => {
+    if (!route || spotRouteId !== route.id) {
+      return;
+    }
+    clearSelectedSpotId(route.id);
+  }, [route, spotRouteId, clearSelectedSpotId]);
+
   const handleScrollEnd = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (categorizedSpots.length === 0 || !Number.isFinite(event.nativeEvent.contentOffset.x)) {
@@ -444,8 +461,7 @@ export default function SpotDiscoveryScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#0a7ea4" />
-          <Text style={styles.statusText}>ルート周辺のスポットを準備しています…</Text>
+          <LoadingState message="ルート周辺のスポットを探しています" />
         </View>
       </SafeAreaView>
     );
@@ -455,9 +471,12 @@ export default function SpotDiscoveryScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.centerContent}>
-          <Text style={styles.errorTitle}>スポットを表示できませんでした</Text>
-          <Text style={styles.statusText}>{loadError}</Text>
-          <PrimaryButton label="もう一度試す" onPress={() => ensureCategoryLoaded(selectedCategory)} />
+          <EmptyState
+            icon="alert-circle-outline"
+            message={loadError}
+            actionLabel="もう一度試す"
+            onAction={() => ensureCategoryLoaded(selectedCategory)}
+          />
           <PrimaryButton label="ルート確認に戻る" variant="secondary" onPress={() => router.back()} />
         </View>
       </SafeAreaView>
@@ -470,24 +489,28 @@ export default function SpotDiscoveryScreen() {
       id: 'departure',
       coordinate: departure.coordinates,
       title: `出発: ${departure.label}`,
-      color: '#2e8b57',
+      color: Colors.success,
     },
     ...route.waypoints.map((waypoint, index) => ({
       id: `route-waypoint-${index}`,
       coordinate: waypoint.coordinates,
       title: waypoint.name,
-      color: '#718096',
+      color: Colors.textTertiary,
     })),
   ];
   const spotMarkers: MapMarkerSpec[] = categorizedSpots.map((spot) => {
     const order = selectedOrderById.get(spot.id);
+    const isSelected = selectedSpot !== null && spot.id === selectedSpot.id;
     return {
       id: spot.id,
       coordinate: spot.coordinates,
       title: order ? `${order}. ${spot.name}` : spot.name,
       description: `${spot.category}・寄ると約${spot.extraMinutes}分${spot.isMock ? '・モック' : ''}`,
-      color: selectedSpot && spot.id === selectedSpot.id ? '#e8562f' : order ? '#2e8b57' : '#0a7ea4',
-      onPress: () => handleSelectSpot(spot.id, true),
+      color: isSelected ? Colors.accentRed : order ? Colors.success : Colors.accentBlue,
+      // 選択中のMarkerを常に最前面へ。近距離のMarker同士が重なっても選択中のものを操作しやすくする。
+      zIndex: isSelected ? 10 : order ? 5 : 1,
+      // 選択中の同じMarkerを再タップした場合は選択解除、それ以外は選択/切り替え。
+      onPress: () => (isSelected ? handleDeselectSpot() : handleSelectSpot(spot.id, true)),
     };
   });
 
@@ -526,28 +549,25 @@ export default function SpotDiscoveryScreen() {
         contentKey={`spot-${route.id}-${selectedCategory}`}
         onMapReady={() => setMapReady(true)}
         onRegionChangeComplete={handleRegionChangeComplete}
+        onPress={handleDeselectSpot}
       />
 
       {categorizedSpots.length === 0 ? (
         <View style={styles.emptyCategoryBox}>
           {pendingCategory !== null && pendingCategory === resolveGoogleCategory(selectedCategory) ? (
-            <>
-              <ActivityIndicator color="#0a7ea4" />
-              <Text style={styles.emptyCategoryText}>このカテゴリのスポットを探しています…</Text>
-            </>
+            <LoadingState message="このカテゴリのスポットを探しています" />
           ) : categoryFetchError ? (
-            <>
-              <Text style={styles.emptyCategoryText}>{categoryFetchError}</Text>
-              <PrimaryButton
-                label="もう一度試す"
-                variant="secondary"
-                onPress={() => ensureCategoryLoaded(selectedCategory)}
-              />
-            </>
+            <EmptyState
+              icon="alert-circle-outline"
+              message={categoryFetchError}
+              actionLabel="もう一度試す"
+              onAction={() => ensureCategoryLoaded(selectedCategory)}
+            />
           ) : (
-            <Text style={styles.emptyCategoryText}>
-              このカテゴリで寄れそうな場所は見つかりませんでした。他のカテゴリも見てみてください。
-            </Text>
+            <EmptyState
+              icon="compass-outline"
+              message="このカテゴリで寄れそうな場所は見つかりませんでした。他のカテゴリも見てみてください。"
+            />
           )}
         </View>
       ) : (
@@ -559,7 +579,7 @@ export default function SpotDiscoveryScreen() {
           decelerationRate="fast"
           contentContainerStyle={styles.cardList}
           onMomentumScrollEnd={handleScrollEnd}>
-          {categorizedSpots.map((spot) => {
+          {categorizedSpots.map((spot, index) => {
             const order = selectedOrderById.get(spot.id);
             return (
               <SpotCard
@@ -568,6 +588,12 @@ export default function SpotDiscoveryScreen() {
                 selected={selectedSpot !== null && spot.id === selectedSpot.id}
                 selectedOrder={order}
                 width={cardWidth}
+                // 1画面1枚のpaging carouselのため、実際に見えているのは常に1枚(+前後の
+                // スワイプ先候補)だけ。この2件だけをPhoto fetch対象にし、それ以外の
+                // カテゴリ内の残り候補はスクロールで近づくまでfetchしない(真のlazy load、
+                // 実機で「カテゴリを開いた瞬間に全候補分fetchされる」不具合の修正)。
+                visible={Math.abs(index - selectedIndex) <= 1}
+                photoPriority={index === selectedIndex ? 'high' : 'low'}
                 onSelect={() => handleSelectSpot(spot.id, false)}
                 onToggle={() => handleToggleStop(spot.id)}
               />
@@ -586,7 +612,7 @@ export default function SpotDiscoveryScreen() {
         {selectionError && <Text style={styles.errorText}>{selectionError}</Text>}
         <Text style={styles.planSummary}>
           寄るところ {activeSelectedSpotIds.length}/{MAX_SELECTED_SPOTS}
-          {currentPlan ? ` ・ ${currentPlan.distanceKm}km ・ 約${currentPlan.durationMinutes}分` : ''}
+          {currentPlan ? ` ・ ${formatDistanceLabel(currentPlan.distanceKm)} ・ 約${formatMinutesLabel(currentPlan.durationMinutes)}` : ''}
         </Text>
         <PrimaryButton
           label={isNavigating ? 'ルートを確認しています…' : '寄り道を確認する'}
@@ -603,6 +629,8 @@ function SpotCard({
   selected,
   selectedOrder,
   width,
+  visible,
+  photoPriority,
   onSelect,
   onToggle,
 }: {
@@ -610,22 +638,68 @@ function SpotCard({
   selected: boolean;
   selectedOrder: number | undefined;
   width: number;
+  visible: boolean;
+  photoPriority: 'high' | 'low';
   onSelect: () => void;
   onToggle: () => void;
 }) {
+  // 写真上(PlacePhotoHero)にcategory badge・Place名・短い説明を既に表示しているため、
+  // 写真下では重複させず、素早く選べるために最も重要な追加時間・距離・CTAだけを見せる
+  // (実機で「写真上下で名前・説明が二重表示され、追加時間が埋もれる」不具合の修正)。
+  // 写真が無いmockデータのみ、下側にフォールバックの説明を表示する。
   return (
     <View style={[styles.card, { width }, selected && styles.cardSelected]}>
       <Pressable onPress={onSelect}>
-        <View style={styles.badgeRow}>
-          <Text style={styles.categoryBadge}>{spot.category}</Text>
-          {spot.isMock && <Text style={styles.mockBadge}>モック</Text>}
-          {selectedOrder && <Text style={styles.orderBadge}>寄るところ {selectedOrder}</Text>}
-        </View>
-        <Text style={styles.spotName}>{spot.name}</Text>
-        <Text style={styles.extraTime}>寄ると約{spot.extraMinutes}分</Text>
-        <Text style={styles.description}>{spot.description}</Text>
-        <Text style={styles.recommendation}>おすすめ理由: {spot.recommendation}</Text>
+        {!spot.isMock && (
+          <PlacePhotoHero
+            placeId={spot.id}
+            name={spot.name}
+            categoryLabel={spot.category}
+            category={SPOT_CATEGORY_TO_PLACE_CATEGORY[spot.category]}
+            description={spot.description}
+            photoRef={spot.photoRef}
+            visible={visible}
+            priority={photoPriority}
+            compact
+          />
+        )}
+        {spot.isMock ? (
+          <>
+            <View style={styles.badgeRow}>
+              <Text style={styles.categoryBadge}>{spot.category}</Text>
+              <Text style={styles.mockBadge}>モック</Text>
+              {selectedOrder && <Text style={styles.orderBadge}>寄るところ {selectedOrder}</Text>}
+            </View>
+            <Text style={styles.spotName}>{spot.name}</Text>
+            <Text style={styles.extraTime}>寄ると約{spot.extraMinutes}分</Text>
+            <Text style={styles.description}>{spot.description}</Text>
+            <Text style={styles.recommendation}>{spot.recommendation}</Text>
+          </>
+        ) : (
+          <View style={styles.leanInfoRow}>
+            {selectedOrder && (
+              <View style={styles.badgeRow}>
+                <Text style={styles.orderBadge}>寄るところ {selectedOrder}</Text>
+              </View>
+            )}
+            <Text style={styles.extraTime}>
+              寄ると約{spot.extraMinutes}分{spot.extraDistanceKm ? `(往復約${spot.extraDistanceKm}km)` : ''}
+            </Text>
+          </View>
+        )}
       </Pressable>
+      <PlaceActionButtons
+        compact
+        primaryLabel=""
+        onPrimaryPress={() => {}}
+        placeName={spot.name}
+        onGoogleMapsPress={() => {
+          void openExternalUrl(buildGoogleMapsPlaceUrl({ name: spot.name, placeId: spot.id }));
+        }}
+        onWebPress={() => {
+          void openExternalUrl(buildWebSearchUrl({ name: spot.name }));
+        }}
+      />
       <PrimaryButton
         label={selectedOrder ? '行くのをやめる' : 'ここ寄ってみる'}
         variant={selectedOrder ? 'secondary' : 'primary'}
@@ -639,65 +713,68 @@ function SpotCard({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   centerContent: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-    gap: 16,
+    padding: Spacing.xl,
+    gap: Spacing.lg,
   },
   errorTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'center',
   },
   statusText: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
   },
   mapHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
     gap: 2,
   },
   routeLabel: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   mockNotice: {
     fontSize: 11,
-    color: '#7a5b18',
+    color: Colors.warning,
   },
   categoryRow: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
   },
   emptyCategoryBox: {
-    marginHorizontal: 16,
-    marginVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#f5f6f7',
-    padding: 16,
+    marginHorizontal: Spacing.lg,
+    marginVertical: Spacing.sm,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceSubtle,
+    padding: Spacing.lg,
     alignItems: 'center',
-    gap: 10,
+    gap: Spacing.sm + 2,
   },
   emptyCategoryText: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 19,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
   },
   map: {
     flex: 1,
-    minHeight: 180,
-    margin: 16,
-    marginVertical: 8,
+    // 実機の小さい画面(iPhone SE等)でCard+注意文+footerと縦に競合し、footerが画面外へ
+    // 押し出されて見えなくなる/詰まって見える不具合があったため、地図の最小高さを縮小して
+    // 下側の要素に確実にスペースを譲る(セクション21)。
+    minHeight: 130,
+    margin: Spacing.lg,
+    marginVertical: Spacing.sm,
   },
   cardList: {
     paddingHorizontal: CARD_MARGIN,
@@ -705,105 +782,107 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   card: {
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 14,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.md + 2,
     justifyContent: 'space-between',
   },
   cardSelected: {
-    borderColor: '#0a7ea4',
-    backgroundColor: '#f2fbfd',
+    borderWidth: 1.5,
+    borderColor: Colors.accentBlue,
   },
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 7,
+    gap: Spacing.xs + 2,
+    marginBottom: Spacing.sm - 1,
   },
   categoryBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#0a7ea4',
-    backgroundColor: '#e7f7fa',
-    borderRadius: 999,
+    color: Colors.accentBlue,
+    backgroundColor: Colors.accentBlueMuted,
+    borderRadius: Radius.pill,
     paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingHorizontal: Spacing.sm,
   },
   mockBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7a5b18',
-    backgroundColor: '#fff5d6',
-    borderRadius: 999,
+    color: Colors.warning,
+    backgroundColor: Colors.warningMuted,
+    borderRadius: Radius.pill,
     paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingHorizontal: Spacing.sm,
   },
   orderBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#26734d',
-    backgroundColor: '#e7f6ed',
-    borderRadius: 999,
+    color: Colors.success,
+    backgroundColor: Colors.successMuted,
+    borderRadius: Radius.pill,
     paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingHorizontal: Spacing.sm,
   },
   spotName: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
     marginBottom: 3,
   },
   extraTime: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#e8562f',
-    marginBottom: 6,
+    color: Colors.accentBlue,
+    marginBottom: Spacing.sm - 2,
+  },
+  leanInfoRow: {
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
   },
   description: {
     fontSize: 12,
     lineHeight: 17,
-    color: '#334',
+    color: Colors.textSecondary,
     marginBottom: 5,
   },
   recommendation: {
     fontSize: 11,
     lineHeight: 16,
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   cardButton: {
     minHeight: 44,
-    marginTop: 10,
+    marginTop: Spacing.sm + 2,
   },
   policyNotice: {
-    marginHorizontal: 16,
-    marginTop: 4,
-    borderRadius: 10,
-    backgroundColor: '#f5f6f7',
-    padding: 9,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.xs,
+    borderRadius: Radius.sm + 2,
+    backgroundColor: Colors.surfaceSubtle,
+    padding: Spacing.sm + 1,
   },
   policyText: {
     fontSize: 10,
     lineHeight: 15,
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
   },
   planSummary: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#334',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: Spacing.sm - 2,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: Spacing.sm - 2,
   },
 });

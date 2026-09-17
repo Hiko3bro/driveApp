@@ -5,8 +5,10 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
-import { summarizeDriveConditions } from '@/types/drive';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
+import { formatMinutesLabel, summarizeDriveConditions } from '@/types/drive';
 import type { RouteOption } from '@/types/route';
 
 function resolveRoute(routes: RouteOption[], selectedRouteId: string | null): RouteOption | null {
@@ -65,7 +67,7 @@ export default function RouteSummaryScreen() {
         <Text style={styles.badge}>ルートを選択しました</Text>
         <Text style={styles.routeName}>{route.name}</Text>
         <Text style={styles.meta}>
-          {route.distanceKm}km ・ 約{route.durationMinutes}分
+          {formatDistanceLabel(route.distanceKm)} ・ 約{formatMinutesLabel(route.durationMinutes)}
         </Text>
         <Text style={styles.conditionSummary}>今日の気分: {summarizeDriveConditions(conditions)}</Text>
 
@@ -117,90 +119,90 @@ export default function RouteSummaryScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
+    padding: Spacing.xl,
   },
   badge: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     fontWeight: '700',
-    color: '#0a7ea4',
-    marginBottom: 8,
+    color: Colors.accentBlue,
+    marginBottom: Spacing.sm,
   },
   routeName: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 8,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   meta: {
-    fontSize: 14,
-    color: '#5b6770',
-    marginBottom: 4,
+    fontSize: Typography.body.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
   },
   conditionSummary: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#5b6770',
-    marginBottom: 16,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.lg,
   },
   tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 20,
+    gap: Spacing.sm,
+    marginBottom: Spacing.xl - 4,
   },
   tag: {
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: '#eef2f3',
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.surfaceElevated,
   },
   tagText: {
     fontSize: 12,
-    color: '#334',
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   section: {
-    marginBottom: 20,
+    marginBottom: Spacing.xl - 4,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   description: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#334',
-    marginBottom: 8,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
   },
   highlight: {
-    fontSize: 13,
-    color: '#0a7ea4',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.accentBlue,
     fontWeight: '600',
-    marginBottom: 6,
+    marginBottom: Spacing.sm - 2,
   },
   audience: {
     fontSize: 12,
-    color: '#8b959c',
+    color: Colors.textTertiary,
   },
   noticeBox: {
-    borderRadius: 12,
-    backgroundColor: '#f5f6f7',
-    padding: 14,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceSubtle,
+    padding: Spacing.md + 2,
   },
   noticeText: {
     fontSize: 12,
     lineHeight: 18,
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
 });

@@ -30,8 +30,40 @@ export interface DrivePlanRequestInput {
   /** ユーザーが実際に指定した経由地点(順序を維持、捏造しない)。 */
   userViaPoints: Coordinates[];
   returnTarget: DrivePlanReturnTarget;
-  availableTimeMinutes: number;
+  /** ユーザーが「使える時間」を指定した場合のみ渡す。未指定ならundefined(架空の既定値を送らない)。 */
+  availableTimeMinutes?: number;
   preferences: DrivePlanPreferences;
+  /**
+   * 「生駒を走りたい」等の強い地理的希望を、Google Places Text Search等で実在確認した
+   * 後の座標のみを渡す(AIが創作した座標ではない)。指定すると、drive-route-plannerの
+   * 候補探索がこの地点の方向へ強く偏る。
+   */
+  biasPoint?: Coordinates;
+  /**
+   * 「高知県でドライブ」等の強い地域制約(ドライブ計画チャットのplanningAreaQueryを
+   * 実在確認した代表地点+目安半径)。指定すると、候補探索・anchor生成がこの範囲内へ
+   * 強く制約される(行政界の厳密なpolygonではなく、代表地点からの距離による制約)。
+   */
+  areaConstraint?: { center: Coordinates; radiusMeters: number; label?: string; prefecture?: string };
+  /**
+   * ユーザーが候補カードから選んで既に追加済みの立ち寄り地点(ドライブ計画チャット限定)。
+   * userViaPointsとは異なり順序に意味を持たず、サーバー側で効率の良い順序へ並べ替えてよい。
+   */
+  optionalViaPoints?: Coordinates[];
+  /** trueの場合、optionalViaPointsの並べ替えを行わない(ユーザーが明示的に順序を指定した直後のみ使う)。 */
+  preserveOptionalOrder?: boolean;
+  /**
+   * 「別の案見せて」等の再生成時に、クライアントが既に提示済みの実在Place IDを渡す。
+   * サーバー側のSpot Pool・corridor候補選定で、既出の候補を優先的に避ける
+   * (完全ランダム化はしない、あくまで「既出を避ける」ソフトな除外)。
+   */
+  excludePlaceIds?: string[];
+  /**
+   * trueの場合、userViaPoints/optionalViaPointsを通る基本ルートだけを返し、残り時間を
+   * 埋めるための追加anchor探索を一切行わない。既に選択済みのRouteへ1件だけOptional Stop
+   * を追加する操作専用(「別の案見せて」等のゼロからの再生成では使わない)。
+   */
+  lockToProvidedStops?: boolean;
 }
 
 export interface DrivePlanSuggestedPlace {
@@ -42,6 +74,15 @@ export interface DrivePlanSuggestedPlace {
   primaryType: string | null;
 }
 
+export interface DrivePlanNearbySuggestion {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  primaryType: string | null;
+  addedMinutes: number;
+}
+
 export interface DrivePlan {
   id: string;
   distanceMeters: number;
@@ -50,10 +91,16 @@ export interface DrivePlan {
   source: 'google';
   suggestedPlace?: DrivePlanSuggestedPlace;
   warning?: string | null;
+  nearbySuggestions?: DrivePlanNearbySuggestion[];
+  /** corridor型のプラン(現状は海沿いのみ)が実際に経由した複数の実在スポット(1〜2件)。 */
+  suggestedPlaces?: DrivePlanSuggestedPlace[];
+  /** UI文言選択用。現状'coastal'のみ。 */
+  corridorTheme?: 'coastal';
 }
 
 export interface DrivePlanMeta {
-  availableTimeMinutes: number;
+  /** ユーザーが「使える時間」を指定した場合のみサーバーから返る。未指定ならundefined。 */
+  availableTimeMinutes?: number;
   baseDurationMinutes?: number;
   overBudget: boolean;
   /** 調査用。候補探索を何ラウンド実行したか。 */
@@ -108,6 +155,33 @@ function parseSuggestedPlace(value: unknown): DrivePlanSuggestedPlace | null {
   };
 }
 
+function parseNearbySuggestion(value: unknown): DrivePlanNearbySuggestion | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== 'string' ||
+    record.id.length === 0 ||
+    typeof record.name !== 'string' ||
+    record.name.length === 0 ||
+    !isFiniteNumber(record.latitude) ||
+    !isFiniteNumber(record.longitude) ||
+    (record.primaryType !== null && typeof record.primaryType !== 'string') ||
+    !isFiniteNumber(record.addedMinutes)
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    name: record.name,
+    latitude: record.latitude,
+    longitude: record.longitude,
+    primaryType: record.primaryType,
+    addedMinutes: record.addedMinutes,
+  };
+}
+
 /** サーバー応答を無条件に信頼せず、実行時に最低限の型・形状を検証する。想定外の形はnullにする(例外を投げない)。 */
 function parseDrivePlan(value: unknown): DrivePlan | null {
   if (typeof value !== 'object' || value === null) {
@@ -142,6 +216,46 @@ function parseDrivePlan(value: unknown): DrivePlan | null {
     warning = record.warning;
   }
 
+  let nearbySuggestions: DrivePlanNearbySuggestion[] | undefined;
+  if (record.nearbySuggestions !== undefined) {
+    if (!Array.isArray(record.nearbySuggestions)) {
+      return null;
+    }
+    const parsedList: DrivePlanNearbySuggestion[] = [];
+    for (const item of record.nearbySuggestions) {
+      const parsed = parseNearbySuggestion(item);
+      if (!parsed) {
+        return null;
+      }
+      parsedList.push(parsed);
+    }
+    nearbySuggestions = parsedList;
+  }
+
+  let suggestedPlaces: DrivePlanSuggestedPlace[] | undefined;
+  if (record.suggestedPlaces !== undefined) {
+    if (!Array.isArray(record.suggestedPlaces)) {
+      return null;
+    }
+    const parsedList: DrivePlanSuggestedPlace[] = [];
+    for (const item of record.suggestedPlaces) {
+      const parsed = parseSuggestedPlace(item);
+      if (!parsed) {
+        return null;
+      }
+      parsedList.push(parsed);
+    }
+    suggestedPlaces = parsedList;
+  }
+
+  let corridorTheme: 'coastal' | undefined;
+  if (record.corridorTheme !== undefined) {
+    if (record.corridorTheme !== 'coastal') {
+      return null;
+    }
+    corridorTheme = 'coastal';
+  }
+
   return {
     id: record.id,
     distanceMeters: record.distanceMeters,
@@ -150,6 +264,9 @@ function parseDrivePlan(value: unknown): DrivePlan | null {
     source: 'google',
     suggestedPlace,
     warning,
+    nearbySuggestions,
+    suggestedPlaces,
+    corridorTheme,
   };
 }
 
@@ -158,8 +275,15 @@ function parseMeta(value: unknown): DrivePlanMeta | null {
     return null;
   }
   const record = value as Record<string, unknown>;
-  if (!isFiniteNumber(record.availableTimeMinutes) || typeof record.overBudget !== 'boolean') {
+  if (typeof record.overBudget !== 'boolean') {
     return null;
+  }
+  let availableTimeMinutes: number | undefined;
+  if (record.availableTimeMinutes !== undefined) {
+    if (!isFiniteNumber(record.availableTimeMinutes)) {
+      return null;
+    }
+    availableTimeMinutes = record.availableTimeMinutes;
   }
   let baseDurationMinutes: number | undefined;
   if (record.baseDurationMinutes !== undefined) {
@@ -176,7 +300,7 @@ function parseMeta(value: unknown): DrivePlanMeta | null {
     searchRoundsUsed = record.searchRoundsUsed;
   }
   return {
-    availableTimeMinutes: record.availableTimeMinutes,
+    availableTimeMinutes,
     baseDurationMinutes,
     overBudget: record.overBudget,
     searchRoundsUsed,
@@ -252,11 +376,32 @@ export async function requestDrivePlans(input: DrivePlanRequestInput): Promise<D
     origin: input.origin,
     userViaPoints: input.userViaPoints,
     returnTarget: input.returnTarget,
-    availableTimeMinutes: input.availableTimeMinutes,
     preferences: input.preferences,
   };
   if (input.returnTarget === 'different' && input.destination) {
     body.destination = input.destination;
+  }
+  // 未指定(undefined)の場合はキー自体を送らない。架空の既定値をサーバーへ渡さないため。
+  if (input.availableTimeMinutes !== undefined) {
+    body.availableTimeMinutes = input.availableTimeMinutes;
+  }
+  if (input.biasPoint) {
+    body.biasPoint = input.biasPoint;
+  }
+  if (input.areaConstraint) {
+    body.areaConstraint = input.areaConstraint;
+  }
+  if (input.optionalViaPoints && input.optionalViaPoints.length > 0) {
+    body.optionalViaPoints = input.optionalViaPoints;
+  }
+  if (input.preserveOptionalOrder) {
+    body.preserveOptionalOrder = input.preserveOptionalOrder;
+  }
+  if (input.excludePlaceIds && input.excludePlaceIds.length > 0) {
+    body.excludePlaceIds = input.excludePlaceIds;
+  }
+  if (input.lockToProvidedStops) {
+    body.lockToProvidedStops = input.lockToProvidedStops;
   }
 
   try {

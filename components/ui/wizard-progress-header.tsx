@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
+
 interface WizardProgressHeaderProps {
   /** 現在のステップ番号(1始まり)。 */
   step: number;
@@ -39,10 +41,11 @@ export function WizardProgressHeader({ step, total, title = '', onBack }: Wizard
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 14,
-    gap: 10,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.lg,
+    gap: Spacing.sm,
+    backgroundColor: Colors.background,
   },
   topRow: {
     flexDirection: 'row',
@@ -55,31 +58,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   backLabel: {
-    fontSize: 14,
-    color: '#0a7ea4',
+    fontSize: Typography.body.fontSize,
+    color: Colors.accentBlue,
     fontWeight: '600',
   },
   progressLabel: {
-    fontSize: 13,
-    color: '#8b959c',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textTertiary,
     fontWeight: '600',
   },
   dots: {
     flexDirection: 'row',
-    gap: 6,
+    gap: Spacing.xs,
   },
   dot: {
     flex: 1,
     height: 4,
-    borderRadius: 999,
-    backgroundColor: '#e5e9ea',
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.surfaceElevated,
   },
   dotFilled: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: Colors.accentBlue,
   },
   title: {
-    fontSize: 21,
+    fontSize: Typography.screenTitle.fontSize - 7,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
 });

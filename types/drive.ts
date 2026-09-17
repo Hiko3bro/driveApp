@@ -13,7 +13,7 @@ export type Mood =
   | 'driveFocused'
   | 'omakase';
 
-export type ReturnTarget = 'same-as-departure' | 'different';
+export type ReturnTarget = 'same-as-departure' | 'different' | 'ai-suggested';
 
 export type DetourLevel = 'few' | 'normal' | 'many';
 
@@ -59,6 +59,7 @@ export const MOOD_LABELS: Record<Mood, string> = {
 export const RETURN_TARGET_LABELS: Record<ReturnTarget, string> = {
   'same-as-departure': '出発地点に戻る',
   different: '別の場所',
+  'ai-suggested': 'おまかせ',
 };
 
 /** 「今日の気分」で同時に選べる上限。多すぎるとルートの方向性が定まらないため。"omakase"選択時は他を解除するため実質1件。 */
@@ -119,6 +120,8 @@ export function summarizeDriveConditions(conditions: DriveConditions): string {
 
   if (conditions.returnTarget === 'different' && conditions.finalDestination) {
     parts.push(`${conditions.finalDestination.label}へ`);
+  } else if (conditions.returnTarget === 'ai-suggested') {
+    parts.push('ゴールはおまかせ');
   }
 
   if (conditions.viaPoints.length > 0) {

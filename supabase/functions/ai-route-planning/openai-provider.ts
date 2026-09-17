@@ -41,6 +41,37 @@ const SYSTEM_INSTRUCTIONS = `
 - 外部ツールの実行、URLへのアクセス、コードの実行を行ってはいけません。
 - 実在または架空の道路名・地名・座標・店舗名など、具体的な経路やスポットを
   創作してはいけません。実際の道路・時間・スポットは別のシステムが担当します。
+- ユーザーの自由記述に、「生駒を走りたい」「六甲山の方へ」「淡路島に寄りたい」の
+  ような具体的な地名・ランドマーク名を使った強い地理的希望が含まれる場合は、
+  requestedAreaQueryにその地名(検索に使える短い語句、例: "生駒山")だけを入れて
+  ください。座標を創作してはいけません(実在確認は別システムがGoogle Places経由で
+  行います)。「海沿いがいい」「景色のいい道」のような一般的な希望はrequestedAreaQuery
+  に入れず、preferCoastalRoads等の既存フィールドで表現してください。具体的な地名の
+  言及が無ければrequestedAreaQueryは空文字列にしてください。地名の希望(例: 山側の
+  「生駒」)と、明示的なテーマの希望(例: 「海沿いだけがいい」)が地理的に矛盾する
+  場合は、どちらか一方を勝手に無視せず、interpretationSummaryでその旨(両方を
+  考慮しきれない可能性がある、等)に軽く触れてください。
+- wantsAiSuggestedDestinationがtrueの場合、ユーザーは最終到着地点を「おまかせ」に
+  しています。「AIが1件だけ勝手に決める」のではなく、性格の異なる複数の実在ゴール
+  候補をユーザーが選べるようにするため、moods・availableTimeMinutes・seasonHint・
+  userNoteから考えて、方向性の異なる「立ち寄り先のタイプ」を最大3つ考え、
+  suggestedGoalQuery(1つ目)・suggestedGoalQueryAlt1(2つ目)・suggestedGoalQueryAlt2
+  (3つ目)にそれぞれ検索語句として入れてください。3つは互いに体験が異なるものに
+  してください(例: 夜ドライブの気分なら "夜景スポット" / "高原の展望台" / "温泉"のように、
+  山側・海側・自然側等、方向性を変える)。良い案が1つ・2つしか思いつかない場合は、
+  残りを空文字列にしてください(無理に3つ揃えなくてよい)。**主ゴールは、実在する
+  店舗名(飲食店・カフェ等)ではなく、観光地・景勝地・地域を代表するランドマーク
+  (岬・展望台・海岸・公園・神社仏閣・城・博物館等)を優先した検索語句にしてください。
+  ユーザーが明示的に食事・カフェを目的として述べていない限り、飲食店寄りの語句
+  (例:「◯◯グルメ」「評判の店」)にしないでください。** 実在する具体的な店舗・
+  施設名を創作してはいけません(タイプ・カテゴリの語句にとどめる)。実在確認と
+  出発地点周辺への絞り込みは、アプリ側がGoogle Places Text Search(位置の重み付き
+  検索)で別途行います。wantsAiSuggestedDestinationがfalseの場合、
+  suggestedGoalQuery/suggestedGoalQueryAlt1/suggestedGoalQueryAlt2はすべて
+  空文字列にしてください。
+- seasonHintが渡されている場合、季節に合う一般的な傾向を弱い表現(例:
+  「この時期は海沿いが気持ちいい季節です」)で考慮してよいですが、特定の日の
+  開花状況・積雪・イベント開催等のリアルタイムの実況情報を断定して作ってはいけません。
 - あなたの仕事は、与えられたドライブ条件とユーザーの自由記述から、
   ドライブの「嗜好」だけを抽出し、指定されたJSON Schemaの形式で返すことだけです。
 `.trim();
@@ -72,6 +103,8 @@ function buildUserInput(input: AiProviderInput): string {
     hasFinalDestination: input.hasFinalDestination,
     viaPointCount: input.viaPointCount,
     returnDeadline: input.returnDeadline ?? null,
+    seasonHint: input.seasonHint ?? null,
+    wantsAiSuggestedDestination: input.wantsAiSuggestedDestination,
     userNote: input.aiNote,
   });
 }

@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
+
 interface OptionChipProps {
   label: string;
   selected: boolean;
@@ -18,31 +20,32 @@ export function OptionChip({ label, selected, onPress }: OptionChipProps) {
 
 const styles = StyleSheet.create({
   chip: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.pill,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    marginRight: 8,
-    marginBottom: 8,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
+    marginRight: Spacing.sm,
+    marginBottom: Spacing.sm,
     minHeight: 44,
     justifyContent: 'center',
   },
   selected: {
-    borderColor: '#0a7ea4',
-    backgroundColor: '#e5f4f8',
+    borderColor: Colors.accentBlue,
+    backgroundColor: Colors.accentBlueMuted,
   },
   pressed: {
     opacity: 0.8,
   },
   label: {
-    fontSize: 14,
-    color: '#334',
-    fontWeight: '500',
+    fontSize: Typography.body.fontSize,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
+  // 選択時はborder/background/text colorだけで表現し、fontWeightは変えない
+  // (太字化で文字幅が変わりchipが一瞬「巨大化」して見える不具合の修正、セクション22)。
   selectedLabel: {
-    color: '#0a7ea4',
-    fontWeight: '700',
+    color: Colors.accentBlue,
   },
 });

@@ -1,10 +1,12 @@
 import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
+
 interface PrimaryButtonProps {
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'destructive';
   style?: StyleProp<ViewStyle>;
 }
 
@@ -24,12 +26,20 @@ export function PrimaryButton({
       accessibilityState={{ disabled: Boolean(disabled) }}
       style={({ pressed }) => [
         styles.base,
-        variant === 'secondary' ? styles.secondary : styles.primary,
+        variant === 'secondary' && styles.secondary,
+        variant === 'destructive' && styles.destructive,
         Boolean(disabled) && styles.disabled,
         pressed && !disabled && styles.pressed,
         style,
       ]}>
-      <Text style={[styles.label, variant === 'secondary' && styles.secondaryLabel]}>{label}</Text>
+      <Text
+        style={[
+          styles.label,
+          variant === 'secondary' && styles.secondaryLabel,
+          variant === 'destructive' && styles.destructiveLabel,
+        ]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -37,16 +47,17 @@ export function PrimaryButton({
 const styles = StyleSheet.create({
   base: {
     minHeight: 52,
-    borderRadius: 14,
+    borderRadius: Radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  primary: {
-    backgroundColor: '#0a7ea4',
+    paddingHorizontal: Spacing.xl,
+    backgroundColor: Colors.accentBlue,
   },
   secondary: {
-    backgroundColor: '#eef2f3',
+    backgroundColor: Colors.surfaceElevated,
+  },
+  destructive: {
+    backgroundColor: Colors.accentRedMuted,
   },
   disabled: {
     opacity: 0.4,
@@ -55,11 +66,14 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   label: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: Colors.onAccent,
+    fontSize: Typography.button.fontSize,
+    fontWeight: Typography.button.fontWeight,
   },
   secondaryLabel: {
-    color: '#11181C',
+    color: Colors.accentBlue,
+  },
+  destructiveLabel: {
+    color: Colors.accentRed,
   },
 });

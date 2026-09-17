@@ -1,4 +1,5 @@
 import { getInstallId } from '@/services/device/install-id-store';
+import { resolveSeasonHint } from '@/services/date/season';
 import { resolveAvailableMinutes } from '@/services/route/time-budget';
 import type { AiInterpretationResult, AiRoutePreferences } from '@/types/ai-route-preferences';
 import { DESIRED_STOP_OPTIONS, DRIVING_STYLE_OPTIONS, PREFERRED_SCENERY_OPTIONS } from '@/types/ai-route-preferences';
@@ -25,9 +26,15 @@ export type AiRoutePlanningOutcome =
   | { ok: true; result: AiInterpretationResult }
   | { ok: false; reason: AiRoutePlanningFailureReason };
 
-/** aiNoteが空(未入力)ならAI Gatewayを呼び出す意味がないため、呼び出し前に判定する。 */
+/**
+ * aiNoteが空(未入力)ならAI Gatewayを呼び出す意味がないため、呼び出し前に判定する。
+ * 最終地点「おまかせ」(returnTarget === 'ai-suggested')の場合は、aiNoteが空でも
+ * AIにsuggestedGoalQueryを考えてもらう必要があるため呼び出す。
+ */
 export function shouldRequestAiInterpretation(conditions: DriveConditions): boolean {
-  return Boolean(conditions.aiNote && conditions.aiNote.trim().length > 0);
+  return Boolean(
+    (conditions.aiNote && conditions.aiNote.trim().length > 0) || conditions.returnTarget === 'ai-suggested'
+  );
 }
 
 function getSupabaseConfig(): { url: string; publishableKey: string } | null {
@@ -49,11 +56,15 @@ function buildRequestPayload(conditions: DriveConditions) {
     moods: conditions.moods,
     detourLevel: conditions.detourLevel,
     availableTimeMinutes: resolveAvailableMinutes(conditions),
-    returnTarget: conditions.returnTarget,
+    // ai-route-planning側は'same-as-departure'/'different'の2値のみを想定しているため、
+    // 'ai-suggested'はhasFinalDestination: falseとして扱い、代わりにwantsAiSuggestedDestinationで伝える。
+    returnTarget: conditions.returnTarget === 'ai-suggested' ? undefined : conditions.returnTarget,
     hasFinalDestination: Boolean(conditions.finalDestination),
     viaPointCount: conditions.viaPoints.length,
     returnDeadline: conditions.returnDeadline,
     aiNote: conditions.aiNote,
+    seasonHint: resolveSeasonHint(new Date()),
+    wantsAiSuggestedDestination: conditions.returnTarget === 'ai-suggested',
   };
 }
 
@@ -77,7 +88,11 @@ function parseAiRoutePreferences(value: unknown): AiRoutePreferences | null {
     !isStringArrayOf(record.desiredStops, DESIRED_STOP_OPTIONS) ||
     typeof record.drivingStyle !== 'string' ||
     !(DRIVING_STYLE_OPTIONS as readonly string[]).includes(record.drivingStyle) ||
-    typeof record.interpretationSummary !== 'string'
+    typeof record.interpretationSummary !== 'string' ||
+    typeof record.requestedAreaQuery !== 'string' ||
+    typeof record.suggestedGoalQuery !== 'string' ||
+    typeof record.suggestedGoalQueryAlt1 !== 'string' ||
+    typeof record.suggestedGoalQueryAlt2 !== 'string'
   ) {
     return null;
   }
@@ -91,6 +106,10 @@ function parseAiRoutePreferences(value: unknown): AiRoutePreferences | null {
     desiredStops: record.desiredStops,
     drivingStyle: record.drivingStyle as AiRoutePreferences['drivingStyle'],
     interpretationSummary: record.interpretationSummary,
+    requestedAreaQuery: record.requestedAreaQuery,
+    suggestedGoalQuery: record.suggestedGoalQuery,
+    suggestedGoalQueryAlt1: record.suggestedGoalQueryAlt1,
+    suggestedGoalQueryAlt2: record.suggestedGoalQueryAlt2,
   };
 }
 

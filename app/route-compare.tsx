@@ -1,3 +1,4 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect } from 'expo-router/react-navigation';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -14,9 +15,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DriveMapView, type DriveMapViewHandle, type MapMarkerSpec } from '@/components/map/drive-map-view';
+import { EmptyState } from '@/components/ui/empty-state';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION } from '@/services/location/coordinates';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
 import { computeRegionForPath } from '@/services/location/route-map-region';
 import { formatMinutesLabel, summarizeDriveConditions } from '@/types/drive';
 import type { MapRegion } from '@/types/location';
@@ -24,8 +28,10 @@ import type { RouteOption } from '@/types/route';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CARD_MARGIN = 16;
-const CARD_WIDTH = SCREEN_WIDTH - CARD_MARGIN * 2 - 24;
-const CARD_STRIDE = CARD_WIDTH + 16;
+// 隣のCardが少し見えることで横スワイプ可能だと分かるよう、画面幅の85〜90%程度に収める。
+const CARD_WIDTH = Math.round(SCREEN_WIDTH * 0.86);
+const CARD_GAP = 14;
+const CARD_STRIDE = CARD_WIDTH + CARD_GAP;
 const CAMERA_ANIMATION_MS = 450;
 
 /** 選択中ルートのindexを、範囲外や見つからない場合も安全に0へフォールバックする。 */
@@ -147,12 +153,12 @@ export default function RouteCompareScreen() {
   if (routes.length === 0 || !selectedRoute) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>提案できるルートがありませんでした</Text>
-          <Text style={styles.emptyText}>条件を変えて、もう一度ルートを探してみてください。</Text>
-          <PrimaryButton
-            label="条件を入力しなおす"
-            onPress={() => {
+        <View style={styles.emptyStateWrap}>
+          <EmptyState
+            icon="map-outline"
+            message={'提案できるルートがありませんでした\n条件を変えて、もう一度ルートを探してみてください'}
+            actionLabel="条件を入力しなおす"
+            onAction={() => {
               beginConditionsEdit();
               router.push('/conditions');
             }}
@@ -167,13 +173,13 @@ export default function RouteCompareScreen() {
       id: 'departure',
       coordinate: departure.coordinates,
       title: `出発: ${departure.label}`,
-      color: '#2e8b57',
+      color: Colors.success,
     },
     ...selectedRoute.waypoints.map((waypoint, index) => ({
       id: `waypoint-${index}`,
       coordinate: waypoint.coordinates,
       title: waypoint.name,
-      color: index === selectedRoute.waypoints.length - 1 ? '#c0392b' : '#0a7ea4',
+      color: index === selectedRoute.waypoints.length - 1 ? Colors.accentRed : Colors.accentBlue,
     })),
   ];
 
@@ -187,17 +193,17 @@ export default function RouteCompareScreen() {
         </View>
       )}
 
-      {selectedRoute.targetDurationMinutes !== undefined && (
+      {selectedRoute.targetDurationMinutes !== undefined ? (
         <Text style={styles.targetDurationText}>
           目安{formatMinutesLabel(selectedRoute.targetDurationMinutes)} / 約{formatMinutesLabel(selectedRoute.durationMinutes)}
         </Text>
-      )}
+      ) : conditions.availableTime === 'unspecified' ? (
+        <Text style={styles.targetDurationText}>
+          時間指定なし ・ 約{formatMinutesLabel(selectedRoute.durationMinutes)}
+        </Text>
+      ) : null}
 
-      {selectedRoute.warning && (
-        <View style={styles.warningBox}>
-          <Text style={styles.warningText}>{selectedRoute.warning}</Text>
-        </View>
-      )}
+      {selectedRoute.warning && <Text style={styles.warningText}>{selectedRoute.warning}</Text>}
 
       <DriveMapView
         ref={mapRef}
@@ -248,6 +254,8 @@ export default function RouteCompareScreen() {
   );
 }
 
+const MAX_CARD_STOPS = 3;
+
 function RouteCard({
   route,
   selected,
@@ -257,22 +265,51 @@ function RouteCard({
   selected: boolean;
   onPress: () => void;
 }) {
+  const themeTag = route.tags[0];
+  const stops = route.waypoints.slice(0, MAX_CARD_STOPS).map((wp) => wp.name);
+  const remainingStopCount = route.waypoints.length - stops.length;
+
   return (
-    <Pressable onPress={onPress} style={[styles.card, selected && styles.cardSelected]}>
-      <Text style={styles.cardName}>{route.name}</Text>
-      <Text style={styles.cardMeta}>
-        {route.distanceKm}km ・ 約{route.durationMinutes}分
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${route.name}を選ぶ`}
+      accessibilityState={{ selected }}
+      style={[styles.card, selected && styles.cardSelected]}>
+      {selected && (
+        <View style={styles.selectedBadge}>
+          <Ionicons name="checkmark" size={13} color={Colors.onAccent} />
+        </View>
+      )}
+
+      {themeTag && (
+        <View style={styles.themeTag}>
+          <Text style={styles.themeTagText}>{themeTag}</Text>
+        </View>
+      )}
+
+      <Text style={styles.cardName} numberOfLines={2}>
+        {route.name}
       </Text>
-      <Text style={styles.cardDescription}>{route.description}</Text>
-      <View style={styles.tagRow}>
-        {route.tags.map((tag) => (
-          <View key={tag} style={styles.tag}>
-            <Text style={styles.tagText}>{tag}</Text>
-          </View>
-        ))}
+
+      <View style={styles.metricsRow}>
+        <Text style={styles.metricLargeValue}>約{formatMinutesLabel(route.durationMinutes)}</Text>
+        <View style={styles.metricDivider} />
+        <Text style={styles.metricSecondaryValue}>{formatDistanceLabel(route.distanceKm)}</Text>
       </View>
-      <Text style={styles.cardHighlight}>{route.highlight}</Text>
-      <Text style={styles.cardAudience}>{route.audience}</Text>
+
+      {stops.length > 0 && (
+        <Text style={styles.stopsText} numberOfLines={1}>
+          {stops.join(' → ')}
+          {remainingStopCount > 0 ? ` ・ ほか${remainingStopCount}件` : ''}
+        </Text>
+      )}
+
+      {route.highlight && (
+        <Text style={styles.cardHighlight} numberOfLines={2}>
+          {route.highlight}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -280,123 +317,138 @@ function RouteCard({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   conditionSummaryBox: {
-    marginHorizontal: 16,
-    marginTop: 8,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
   },
   conditionSummaryText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   targetDurationText: {
-    marginHorizontal: 16,
-    marginTop: 4,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.xs,
     fontSize: 12,
-    color: '#8b959c',
+    color: Colors.textTertiary,
   },
-  warningBox: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    borderRadius: 10,
-    backgroundColor: '#fff0ed',
-    padding: 10,
-  },
+  // 「目安時間より短め」等、blockingではない注意書きは大きな赤boxではなく、caption程度の
+  // 目立たない1行にとどめる(セクション43。実際に予算超過を伝える文言自体はサーバー側で
+  // 変わらないが、UI上の強さだけを下げる)。
   warningText: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.xs,
     fontSize: 12,
-    lineHeight: 18,
-    color: '#c0392b',
+    lineHeight: 17,
+    color: Colors.textTertiary,
   },
   map: {
     flex: 1,
-    margin: 16,
-    marginBottom: 8,
+    margin: Spacing.lg,
+    marginBottom: Spacing.sm,
   },
-  emptyState: {
+  emptyStateWrap: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-    gap: 16,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#11181C',
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#5b6770',
-    textAlign: 'center',
+    padding: Spacing.xl,
   },
   cardList: {
     paddingHorizontal: CARD_MARGIN,
-    paddingBottom: 4,
-    gap: 16,
+    paddingBottom: Spacing.xs,
+    gap: CARD_GAP,
   },
   card: {
     width: CARD_WIDTH,
-    borderRadius: 16,
+    borderRadius: Radius.xl,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 16,
+    borderColor: 'transparent',
+    backgroundColor: Colors.surface,
+    padding: Spacing.md,
+    gap: Spacing.xs,
   },
   cardSelected: {
-    borderColor: '#0a7ea4',
-    backgroundColor: '#f2fbfd',
+    borderColor: Colors.accentBlue,
+  },
+  selectedBadge: {
+    position: 'absolute',
+    top: Spacing.sm + 2,
+    right: Spacing.sm + 2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.accentBlue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themeTag: {
+    alignSelf: 'flex-start',
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.accentBlueMuted,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+  },
+  themeTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.accentBlue,
   },
   cardName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 4,
+    fontSize: Typography.cardTitle.fontSize,
+    fontWeight: Typography.cardTitle.fontWeight,
+    color: Colors.textPrimary,
+    paddingRight: 28,
   },
-  cardMeta: {
-    fontSize: 13,
-    color: '#5b6770',
-    marginBottom: 8,
+  metricsRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm + 2,
   },
-  cardDescription: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#334',
-    marginBottom: 8,
+  metricLargeValue: {
+    fontSize: Typography.metricLarge.fontSize,
+    fontWeight: Typography.metricLarge.fontWeight,
+    color: Colors.textPrimary,
+  },
+  metricDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: Colors.divider,
+  },
+  metricSecondaryValue: {
+    fontSize: Typography.body.fontSize,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  stopsText: {
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
   },
   tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 8,
+    gap: Spacing.xs + 2,
   },
   tag: {
     paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: '#eef2f3',
+    paddingHorizontal: Spacing.sm,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.surfaceElevated,
   },
   tagText: {
     fontSize: 11,
-    color: '#334',
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   cardHighlight: {
-    fontSize: 12,
-    color: '#0a7ea4',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  cardAudience: {
-    fontSize: 11,
-    color: '#8b959c',
+    fontSize: Typography.secondary.fontSize,
+    lineHeight: 18,
+    color: Colors.textSecondary,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
   changeConditionsButton: {
     marginTop: 0,

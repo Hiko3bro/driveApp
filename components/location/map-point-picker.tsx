@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DriveMapView, type DriveMapViewHandle } from '@/components/map/drive-map-view';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Spacing, Typography } from '@/constants/design-tokens';
 import { isValidCoordinates } from '@/services/location/coordinates';
 import type { Coordinates, MapRegion } from '@/types/location';
 
@@ -135,36 +136,36 @@ export function MapPointPicker({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   header: {
-    padding: 20,
-    paddingBottom: 12,
-    gap: 6,
+    padding: Spacing.lg + 4,
+    paddingBottom: Spacing.md,
+    gap: Spacing.xs + 2,
   },
   title: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   instruction: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#5b6770',
+    color: Colors.textSecondary,
   },
   map: {
     flex: 1,
-    marginHorizontal: 20,
+    marginHorizontal: Spacing.lg + 4,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 13,
     textAlign: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 8,
+    paddingHorizontal: Spacing.lg + 4,
+    paddingTop: Spacing.sm,
   },
   footer: {
-    padding: 20,
-    gap: 12,
+    padding: Spacing.lg + 4,
+    gap: Spacing.md,
   },
 });

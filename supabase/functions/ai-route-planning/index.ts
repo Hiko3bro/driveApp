@@ -71,6 +71,9 @@ const ALLOWED_DETOUR_LEVELS = ["few", "normal", "many"] as const;
 /** types/drive.ts の ReturnTarget と一致。 */
 const ALLOWED_RETURN_TARGETS = ["same-as-departure", "different"] as const;
 
+/** services/date/season.tsのSeasonHintと一致。クライアント側で日付から機械的に算出した値。 */
+const ALLOWED_SEASON_HINTS = ["春", "夏", "秋", "冬"] as const;
+
 /**
  * app/conditions.tsx の「自分で入力」ステップと一致させる、使える時間(分)の許容範囲。
  * 下限15分はMIN_CUSTOM_TOTAL_MINUTES(15分未満は「次へ」をブロックする)、
@@ -157,6 +160,7 @@ function getAllowedOrigins(): string[] {
 type Mood = (typeof ALLOWED_MOODS)[number];
 type DetourLevel = (typeof ALLOWED_DETOUR_LEVELS)[number];
 type ReturnTarget = (typeof ALLOWED_RETURN_TARGETS)[number];
+type SeasonHint = (typeof ALLOWED_SEASON_HINTS)[number];
 
 /**
  * このGatewayが受け取る最小のリクエスト形状。DriveConditionsから、AIによる
@@ -180,6 +184,10 @@ interface AiRoutePlanningRequest {
   returnDeadline?: string;
   /** DriveConditions.aiNote。最大MAX_AI_NOTE_LENGTH文字。 */
   aiNote?: string;
+  /** クライアント側で現在日付から機械的に算出した季節。天気・開花等の実況情報ではない。 */
+  seasonHint?: SeasonHint;
+  /** 最終地点「おまかせ」が選ばれている場合のみtrue(未指定はfalse扱い)。 */
+  wantsAiSuggestedDestination?: boolean;
 }
 
 type ApiSuccessResponse<T> = { ok: true; data: T };
@@ -194,6 +202,8 @@ const ALLOWED_REQUEST_KEYS = new Set<keyof AiRoutePlanningRequest>([
   "viaPointCount",
   "returnDeadline",
   "aiNote",
+  "seasonHint",
+  "wantsAiSuggestedDestination",
 ]);
 
 // ===== バリデーション ======================================================
@@ -303,6 +313,25 @@ function validateAiRoutePlanningRequest(value: unknown): ValidationResult {
     aiNote = record.aiNote;
   }
 
+  let seasonHint: SeasonHint | undefined;
+  if (record.seasonHint !== undefined) {
+    if (
+      typeof record.seasonHint !== "string" ||
+      !(ALLOWED_SEASON_HINTS as readonly string[]).includes(record.seasonHint)
+    ) {
+      return { ok: false, reason: "invalid seasonHint" };
+    }
+    seasonHint = record.seasonHint as SeasonHint;
+  }
+
+  let wantsAiSuggestedDestination: boolean | undefined;
+  if (record.wantsAiSuggestedDestination !== undefined) {
+    if (typeof record.wantsAiSuggestedDestination !== "boolean") {
+      return { ok: false, reason: "wantsAiSuggestedDestination must be boolean" };
+    }
+    wantsAiSuggestedDestination = record.wantsAiSuggestedDestination;
+  }
+
   return {
     ok: true,
     data: {
@@ -314,6 +343,8 @@ function validateAiRoutePlanningRequest(value: unknown): ValidationResult {
       viaPointCount: record.viaPointCount,
       returnDeadline,
       aiNote,
+      seasonHint,
+      wantsAiSuggestedDestination,
     },
   };
 }
@@ -595,11 +626,11 @@ function mapFailureReasonToLogLabel(reason: AiFailureReason): string {
 
 /**
  * コスト削減のため、AIを呼んでも意味が無いリクエストではOpenAIを呼ばない。
- * 現時点ではaiNoteが空(=自由記述が無い)かどうかだけで判定する
- * (それ以外の条件は元々すべて構造化された選択肢のみで確定しているため)。
+ * aiNoteが空(=自由記述が無い)でも、最終地点「おまかせ」が選ばれている場合は
+ * AIにsuggestedGoalQueryを考えてもらう必要があるため呼ぶ。
  */
 function shouldUseAi(request: AiRoutePlanningRequest): boolean {
-  return Boolean(request.aiNote && request.aiNote.trim().length > 0);
+  return Boolean((request.aiNote && request.aiNote.trim().length > 0) || request.wantsAiSuggestedDestination);
 }
 
 /**
@@ -626,6 +657,8 @@ function buildFallbackPreferences(request: AiRoutePlanningRequest): AiRoutePrefe
         ? "driving_focused"
         : "balanced",
     interpretationSummary: "選んだ気分をもとに、条件に合うルートを探します。",
+    requestedAreaQuery: "",
+    suggestedGoalQuery: "",
   };
 }
 
@@ -663,6 +696,8 @@ async function planRouteWithAi(request: AiRoutePlanningRequest): Promise<PlanRou
     viaPointCount: request.viaPointCount,
     returnDeadline: request.returnDeadline,
     aiNote: request.aiNote ?? "",
+    seasonHint: request.seasonHint,
+    wantsAiSuggestedDestination: Boolean(request.wantsAiSuggestedDestination),
   });
 
   if (outcome.ok) {

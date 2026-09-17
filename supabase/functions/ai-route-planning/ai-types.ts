@@ -16,6 +16,8 @@ export type DrivingStyle = (typeof DRIVING_STYLE_OPTIONS)[number];
 
 /** 短い日本語要約の上限文字数。 */
 export const MAX_INTERPRETATION_SUMMARY_LENGTH = 150;
+/** 地名検索クエリの上限文字数(「生駒山」程度の短い語句を想定)。 */
+export const MAX_REQUESTED_AREA_QUERY_LENGTH = 40;
 
 /**
  * AIにドライブ嗜好を解釈させた結果。緯度経度・住所・URL・コード・電話番号・
@@ -32,6 +34,31 @@ export interface AiRoutePreferences {
   drivingStyle: DrivingStyle;
   /** 短い日本語の要約(MAX_INTERPRETATION_SUMMARY_LENGTH文字まで)。 */
   interpretationSummary: string;
+  /**
+   * 自由記述に「生駒を走りたい」のような強い地理的希望が含まれる場合の、検索したい
+   * 地名・ランドマーク名(例: "生駒山")。AIはこの文字列だけを返し、座標を創作しない。
+   * 実在確認はアプリ側がGoogle Places Text Search経由で別途行う。無ければ空文字列。
+   */
+  requestedAreaQuery: string;
+  /**
+   * wantsAiSuggestedDestination(最終地点「おまかせ」)がtrueの場合のみ、
+   * 気分・時間・季節等から考えて良さそうな「立ち寄り先のタイプ」の検索語句
+   * (例: "夜景スポット", "海の見える展望台")を入れる。実在する具体的な店舗・
+   * 施設名を創作してはいけない(検索意図の文字列のみ)。実在確認・出発地点周辺への
+   * 絞り込みはアプリ側がGoogle Places Text Search(locationBias)で行う。
+   * wantsAiSuggestedDestinationがfalseの場合は空文字列。
+   */
+  suggestedGoalQuery: string;
+  /**
+   * suggestedGoalQueryとは体験の異なる、2つ目の立ち寄り先タイプの検索語句
+   * (例: suggestedGoalQueryが"夜景スポット"なら、こちらは"温泉"等、方向性の違う
+   * 候補)。ユーザーが複数の実在ゴール候補から選べるようにするため
+   * (「AIが1件だけ勝手に決める」のではなく「性格の異なる候補を複数見せる」ため)。
+   * wantsAiSuggestedDestinationがfalse、または2件目の案を思いつかない場合は空文字列。
+   */
+  suggestedGoalQueryAlt1: string;
+  /** suggestedGoalQuery/suggestedGoalQueryAlt1とも異なる、3つ目の立ち寄り先タイプの検索語句。無ければ空文字列。 */
+  suggestedGoalQueryAlt2: string;
 }
 
 /**
@@ -59,6 +86,10 @@ export const AI_ROUTE_PREFERENCES_JSON_SCHEMA = {
     },
     drivingStyle: { type: "string", enum: [...DRIVING_STYLE_OPTIONS] },
     interpretationSummary: { type: "string", maxLength: MAX_INTERPRETATION_SUMMARY_LENGTH },
+    requestedAreaQuery: { type: "string", maxLength: MAX_REQUESTED_AREA_QUERY_LENGTH },
+    suggestedGoalQuery: { type: "string", maxLength: MAX_REQUESTED_AREA_QUERY_LENGTH },
+    suggestedGoalQueryAlt1: { type: "string", maxLength: MAX_REQUESTED_AREA_QUERY_LENGTH },
+    suggestedGoalQueryAlt2: { type: "string", maxLength: MAX_REQUESTED_AREA_QUERY_LENGTH },
   },
   required: [
     "avoidHighways",
@@ -69,6 +100,10 @@ export const AI_ROUTE_PREFERENCES_JSON_SCHEMA = {
     "desiredStops",
     "drivingStyle",
     "interpretationSummary",
+    "requestedAreaQuery",
+    "suggestedGoalQuery",
+    "suggestedGoalQueryAlt1",
+    "suggestedGoalQueryAlt2",
   ],
 } as const;
 
@@ -106,6 +141,10 @@ export interface AiProviderInput {
   viaPointCount: number;
   returnDeadline?: string;
   aiNote: string;
+  /** クライアント側で現在日付から機械的に算出した季節('春'|'夏'|'秋'|'冬')。天気・開花等の実況情報ではない。 */
+  seasonHint?: string;
+  /** 最終地点「おまかせ」が選ばれている場合のみtrue。trueの場合のみsuggestedGoalQueryを埋めてよい。 */
+  wantsAiSuggestedDestination: boolean;
 }
 
 /** AI Gateway(index.ts)が呼び出す、プロバイダー非依存のインターフェース。 */
@@ -133,6 +172,10 @@ export function validateAiRoutePreferences(value: unknown): AiRoutePreferences |
     "desiredStops",
     "drivingStyle",
     "interpretationSummary",
+    "requestedAreaQuery",
+    "suggestedGoalQuery",
+    "suggestedGoalQueryAlt1",
+    "suggestedGoalQueryAlt2",
   ]);
   if (!Object.keys(record).every((key) => allowedKeys.has(key))) {
     return null;
@@ -187,6 +230,42 @@ export function validateAiRoutePreferences(value: unknown): AiRoutePreferences |
     return null;
   }
 
+  if (
+    typeof record.requestedAreaQuery !== "string" ||
+    record.requestedAreaQuery.length > MAX_REQUESTED_AREA_QUERY_LENGTH
+  ) {
+    return null;
+  }
+  const trimmedAreaQuery = record.requestedAreaQuery.trim();
+  const requestedAreaQuery = trimmedAreaQuery === "none" ? "" : trimmedAreaQuery;
+
+  if (
+    typeof record.suggestedGoalQuery !== "string" ||
+    record.suggestedGoalQuery.length > MAX_REQUESTED_AREA_QUERY_LENGTH
+  ) {
+    return null;
+  }
+  const trimmedGoalQuery = record.suggestedGoalQuery.trim();
+  const suggestedGoalQuery = trimmedGoalQuery === "none" ? "" : trimmedGoalQuery;
+
+  if (
+    typeof record.suggestedGoalQueryAlt1 !== "string" ||
+    record.suggestedGoalQueryAlt1.length > MAX_REQUESTED_AREA_QUERY_LENGTH
+  ) {
+    return null;
+  }
+  const trimmedGoalQueryAlt1 = record.suggestedGoalQueryAlt1.trim();
+  const suggestedGoalQueryAlt1 = trimmedGoalQueryAlt1 === "none" ? "" : trimmedGoalQueryAlt1;
+
+  if (
+    typeof record.suggestedGoalQueryAlt2 !== "string" ||
+    record.suggestedGoalQueryAlt2.length > MAX_REQUESTED_AREA_QUERY_LENGTH
+  ) {
+    return null;
+  }
+  const trimmedGoalQueryAlt2 = record.suggestedGoalQueryAlt2.trim();
+  const suggestedGoalQueryAlt2 = trimmedGoalQueryAlt2 === "none" ? "" : trimmedGoalQueryAlt2;
+
   return {
     avoidHighways: record.avoidHighways as boolean,
     preferScenicRoads: record.preferScenicRoads as boolean,
@@ -196,5 +275,9 @@ export function validateAiRoutePreferences(value: unknown): AiRoutePreferences |
     desiredStops: record.desiredStops as DesiredStop[],
     drivingStyle: record.drivingStyle as DrivingStyle,
     interpretationSummary: record.interpretationSummary,
+    requestedAreaQuery,
+    suggestedGoalQuery,
+    suggestedGoalQueryAlt1,
+    suggestedGoalQueryAlt2,
   };
 }

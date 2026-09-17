@@ -8,6 +8,7 @@ import { ShareCardMemory } from '@/components/sharing/share-card-memory';
 import { ShareCardPhoto } from '@/components/sharing/share-card-photo';
 import { OptionChip } from '@/components/ui/option-chip';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Spacing } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { shareCardView } from '@/services/sharing/share-image';
 import { projectTrackToSharePoints } from '@/services/sharing/share-route';
@@ -101,20 +102,20 @@ export default function DriveDiaryShareScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 20,
+    padding: Spacing.lg + 4,
     alignItems: 'center',
   },
   sectionTitle: {
     alignSelf: 'flex-start',
     fontSize: 14,
     fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
-    marginTop: 10,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.sm + 2,
   },
   chipRow: {
     flexDirection: 'row',
@@ -122,8 +123,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   previewArea: {
-    marginTop: 4,
-    marginBottom: 12,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 16,
@@ -133,17 +134,17 @@ const styles = StyleSheet.create({
   privacyNote: {
     fontSize: 11,
     lineHeight: 17,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: Spacing.sm,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',

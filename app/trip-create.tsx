@@ -64,6 +64,8 @@ function NumberField({
 export default function TripCreateScreen() {
   const now = new Date();
   const [title, setTitle] = useState('');
+  const [areaName, setAreaName] = useState('');
+  const [wish, setWish] = useState('');
   const [startYear, setStartYear] = useState(String(now.getFullYear()));
   const [startMonth, setStartMonth] = useState(String(now.getMonth() + 1));
   const [startDay, setStartDay] = useState(String(now.getDate()));
@@ -83,15 +85,21 @@ export default function TripCreateScreen() {
       const startDate = `${clampInt(startYear, now.getFullYear(), now.getFullYear() + 3)}-${pad2(clampInt(startMonth, 1, 12))}-${pad2(clampInt(startDay, 1, 31))}`;
       const endDate = `${clampInt(endYear, now.getFullYear(), now.getFullYear() + 3)}-${pad2(clampInt(endMonth, 1, 12))}-${pad2(clampInt(endDay, 1, 31))}`;
       const trip = buildTripFromDateRange(title, startDate, endDate);
+      if (areaName.trim().length > 0) {
+        trip.areaName = areaName.trim();
+      }
+      if (wish.trim().length > 0) {
+        trip.initialWish = wish.trim();
+      }
       const ok = await saveTrip(trip);
       if (!ok) {
-        setError('旅行プランを保存できませんでした。もう一度お試しください。');
+        setError('ドライブ計画を保存できませんでした。もう一度お試しください。');
         return;
       }
       router.replace({ pathname: '/trip-detail', params: { tripId: trip.id } });
     } catch (caught: unknown) {
       setError(
-        caught instanceof TripDateRangeError ? caught.message : '旅行プランを作成できませんでした。もう一度お試しください。'
+        caught instanceof TripDateRangeError ? caught.message : 'ドライブ計画を作成できませんでした。もう一度お試しください。'
       );
     } finally {
       setIsSaving(false);
@@ -102,20 +110,32 @@ export default function TripCreateScreen() {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.heading}>旅行プランを作る</Text>
-          <Text style={styles.subtleText}>旅行名と日程を入れると、日ごとのドライブを計画できます。</Text>
+          <Text style={styles.heading}>ドライブ計画を作る</Text>
+          <Text style={styles.subtleText}>
+            知らない土地でどこを走れば楽しいかをAIと相談しながら見つける計画です。まずは最低限の内容だけ入れてください。
+          </Text>
 
-          <Text style={styles.label}>旅行名</Text>
+          <Text style={styles.label}>タイトル</Text>
           <TextInput
             style={styles.textField}
             value={title}
             onChangeText={setTitle}
-            placeholder="例: 高知旅行"
+            placeholder="例: 高知ドライブ計画"
             placeholderTextColor="#9aa5ab"
-            accessibilityLabel="旅行名"
+            accessibilityLabel="タイトル"
           />
 
-          <Text style={styles.label}>開始日</Text>
+          <Text style={styles.label}>地域名(任意)</Text>
+          <TextInput
+            style={styles.textField}
+            value={areaName}
+            onChangeText={setAreaName}
+            placeholder="例: 高知"
+            placeholderTextColor="#9aa5ab"
+            accessibilityLabel="地域名"
+          />
+
+          <Text style={styles.label}>時期(あとで決めてもOK)</Text>
           <View style={styles.dateRow}>
             <NumberField label="年" value={startYear} onChangeText={setStartYear} min={now.getFullYear()} max={now.getFullYear() + 3} width={72} />
             <NumberField label="月" value={startMonth} onChangeText={setStartMonth} min={1} max={12} />
@@ -128,6 +148,18 @@ export default function TripCreateScreen() {
             <NumberField label="月" value={endMonth} onChangeText={setEndMonth} min={1} max={12} />
             <NumberField label="日" value={endDay} onChangeText={setEndDay} min={1} max={31} />
           </View>
+
+          <Text style={styles.label}>どんな旅行・ドライブにしたいか(任意)</Text>
+          <TextInput
+            style={styles.wishField}
+            value={wish}
+            onChangeText={setWish}
+            placeholder={'例: 現地ではレンタカーを借りる。自然と海を楽しみたい。ご当地の食べ物も知りたい。'}
+            placeholderTextColor="#9aa5ab"
+            multiline
+            accessibilityLabel="どんな旅行・ドライブにしたいか"
+          />
+          <Text style={styles.subtleText}>あとでAIとの相談画面で詳しく聞いていけます。今は書かなくても大丈夫です。</Text>
 
           {error && <Text style={styles.errorText}>{error}</Text>}
         </ScrollView>
@@ -178,6 +210,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     fontSize: 15,
     color: '#11181C',
+  },
+  wishField: {
+    minHeight: 90,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#d7dee0',
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#11181C',
+    textAlignVertical: 'top',
   },
   dateRow: {
     flexDirection: 'row',

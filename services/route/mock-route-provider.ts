@@ -237,7 +237,10 @@ function effectiveTimeBudgetMinutes(params: RouteSearchParams, now = new Date())
   if (!result.ok) {
     throw new RoutePlanningError(result.message);
   }
-  return result.minutes;
+  // このMockRouteProviderは実画面からは呼ばれていない(architecture上の予備実装)。
+  // 生成するジオメトリのスケール計算にのみ使う内部値のため、時間指定なしの場合は
+  // ユーザーへ見せない前提で暫定値を使う(実際のドライブ提案はdrive-route-plannerを使う)。
+  return result.minutes ?? 120;
 }
 
 function createGeometry(

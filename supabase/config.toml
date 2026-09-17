@@ -440,3 +440,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/drive-route-planner/deno.json"
 entrypoint = "./functions/drive-route-planner/index.ts"
+
+[functions.ai-trip-chat]
+enabled = true
+verify_jwt = false
+import_map = "./functions/ai-trip-chat/deno.json"
+entrypoint = "./functions/ai-trip-chat/index.ts"

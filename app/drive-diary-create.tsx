@@ -4,9 +4,11 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
-import { formatDistanceKm, formatElapsedTime } from '@/services/location/format-drive-stats';
+import { formatDistanceKm, formatDistanceLabel, formatElapsedTime } from '@/services/location/format-drive-stats';
 import { pickDiaryPhotos } from '@/services/media/photo-picker';
+import { formatMinutesLabel } from '@/types/drive';
 import { MAX_DIARY_PHOTOS, type DiaryPhoto, type DriveDiaryEntry } from '@/types/drive-diary';
 
 function toDateInputValue(timestamp: number): string {
@@ -134,7 +136,7 @@ export default function DriveDiaryCreateScreen() {
         <TextInput
           style={styles.input}
           placeholder="例: 海沿いのドライブ"
-          placeholderTextColor="#9aa5ab"
+          placeholderTextColor={Colors.textTertiary}
           value={title}
           onChangeText={setTitle}
           maxLength={60}
@@ -144,7 +146,7 @@ export default function DriveDiaryCreateScreen() {
         <TextInput
           style={[styles.input, styles.memoInput]}
           placeholder="今日のドライブの感想など"
-          placeholderTextColor="#9aa5ab"
+          placeholderTextColor={Colors.textTertiary}
           value={memo}
           onChangeText={setMemo}
           multiline
@@ -155,7 +157,7 @@ export default function DriveDiaryCreateScreen() {
         <TextInput
           style={styles.input}
           placeholder="YYYY-MM-DD"
-          placeholderTextColor="#9aa5ab"
+          placeholderTextColor={Colors.textTertiary}
           value={date}
           onChangeText={setDate}
           maxLength={10}
@@ -175,8 +177,8 @@ export default function DriveDiaryCreateScreen() {
 
         <Text style={styles.sectionTitle}>選択したルート</Text>
         <Text style={styles.readonlyText}>
-          {driveRecord.route.name} ・ {driveRecord.route.distanceKm}km ・ 約
-          {driveRecord.route.durationMinutes}分(ルート予定)
+          {driveRecord.route.name} ・ {formatDistanceLabel(driveRecord.route.distanceKm)} ・ 約
+          {formatMinutesLabel(driveRecord.route.durationMinutes)}(ルート予定)
         </Text>
 
         <Text style={styles.sectionTitle}>経由したスポット</Text>
@@ -237,66 +239,66 @@ export default function DriveDiaryCreateScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 20,
+    padding: Spacing.lg + 4,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
-    marginTop: 18,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.lg + 2,
   },
   input: {
-    borderRadius: 12,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: '#d7dee0',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: Colors.divider,
+    paddingHorizontal: Spacing.lg - 2,
+    paddingVertical: Spacing.md,
     fontSize: 15,
-    color: '#11181C',
-    backgroundColor: '#fff',
+    color: Colors.textPrimary,
+    backgroundColor: Colors.surface,
   },
   memoInput: {
     minHeight: 88,
     textAlignVertical: 'top',
   },
   statsCard: {
-    borderRadius: 16,
-    backgroundColor: '#f5f6f7',
-    padding: 16,
-    marginTop: 18,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    marginTop: Spacing.lg + 2,
   },
   statRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
   statLabel: {
-    fontSize: 13,
-    color: '#5b6770',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   statValue: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   readonlyText: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 20,
-    color: '#334',
-    marginBottom: 4,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
   },
   photoRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 10,
+    gap: Spacing.sm + 2,
+    marginBottom: Spacing.sm + 2,
   },
   photoThumbWrapper: {
     width: 88,
@@ -305,8 +307,8 @@ const styles = StyleSheet.create({
   photoThumb: {
     width: 88,
     height: 88,
-    borderRadius: 12,
-    backgroundColor: '#eef2f3',
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceElevated,
   },
   photoRemoveButton: {
     position: 'absolute',
@@ -315,31 +317,31 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#11181C',
+    backgroundColor: Colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   photoRemoveButtonText: {
-    color: '#fff',
+    color: Colors.textPrimary,
     fontSize: 12,
     fontWeight: '700',
   },
   photoNoticeText: {
     fontSize: 12,
     lineHeight: 18,
-    color: '#7a5b18',
-    marginBottom: 10,
+    color: Colors.warning,
+    marginBottom: Spacing.sm + 2,
   },
   photoPickButton: {
     alignSelf: 'flex-start',
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',

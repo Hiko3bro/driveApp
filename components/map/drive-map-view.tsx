@@ -1,13 +1,23 @@
 import { forwardRef, useImperativeHandle, useRef } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
 
+import { Colors, Radius } from '@/constants/design-tokens';
 import {
   DEMO_MAP_REGION,
   isValidCoordinates,
   isValidMapRegion,
 } from '@/services/location/coordinates';
 import type { Coordinates, MapRegion } from '@/types/location';
+
+/**
+ * 地図の描画エンジンだけを分離する(Google Places/Google Routesの検索・ルート計算は
+ * 一切変更しない、地図タイルの見た目だけの話)。providerを明示しない場合の
+ * react-native-mapsの既定挙動どおり、iOSはApple Maps(MapKit)・AndroidはGoogle Mapsに
+ * なる。ここでは意図を明文化するため、Androidにだけ明示的にPROVIDER_GOOGLEを指定する
+ * (iOSはundefinedのままにして、ライブラリの既定=Apple Mapsを使う)。
+ */
+const MAP_PROVIDER = Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined;
 
 export interface MapMarkerSpec {
   id: string;
@@ -16,6 +26,8 @@ export interface MapMarkerSpec {
   description?: string;
   color?: string;
   onPress?: () => void;
+  /** 重なったMarker同士で前面に出したいものを指定する(選択中Marker用など)。 */
+  zIndex?: number;
 }
 
 export interface DriveMapViewHandle {
@@ -39,6 +51,12 @@ export interface DriveMapViewProps {
   polylineColor?: string;
   onRegionChangeComplete?: (region: MapRegion) => void;
   onMapReady?: () => void;
+  /**
+   * 地図の背景(Marker以外)をタップした時に呼ばれる。react-native-mapsは、
+   * 自前のonPressを持つMarker上のタップにはMapViewのonPressを発火させないため、
+   * これを「Marker以外をタップ=選択解除」の実装に使う。
+   */
+  onPress?: () => void;
   /** 地図中央に固定ピンを重ねて表示する(場所指定モード用)。 */
   showCenterPin?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -52,9 +70,10 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
       markers = [],
       polyline,
       contentKey,
-      polylineColor = '#0a7ea4',
+      polylineColor = Colors.accentBlue,
       onRegionChangeComplete,
       onMapReady,
+      onPress,
       showCenterPin = false,
       style,
     },
@@ -94,11 +113,13 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
       <View style={[styles.container, style]}>
         <MapView
           ref={mapRef}
+          provider={MAP_PROVIDER}
           style={StyleSheet.absoluteFill}
           initialRegion={safeInitialRegion}
           region={safeRegion}
           onRegionChangeComplete={onRegionChangeComplete}
           onMapReady={onMapReady}
+          onPress={onPress}
           showsCompass={false}>
           {safeMarkers.map((marker) => (
             <Marker
@@ -107,6 +128,7 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
               title={marker.title}
               description={marker.description}
               pinColor={marker.color}
+              zIndex={marker.zIndex}
               onPress={marker.onPress}
             />
           ))}
@@ -133,8 +155,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     overflow: 'hidden',
-    borderRadius: 16,
-    backgroundColor: '#e5e9ea',
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
   },
   centerPin: {
     position: 'absolute',
@@ -148,8 +170,8 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#e8562f',
+    backgroundColor: Colors.accentRed,
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: Colors.textPrimary,
   },
 });

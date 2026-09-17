@@ -9,8 +9,17 @@ import {
   logSafeError,
   readPositiveIntEnv,
 } from "../ai-route-planning/rate-limit-infra.ts";
-import { searchNearbyPlaces, type GooglePlacesFailureReason } from "./google-places-provider.ts";
-import { validatePlaceSearchRequest } from "./place-types.ts";
+import {
+  fetchPlacePhoto,
+  searchNearbyPlaces,
+  searchTextPlaces,
+  type GooglePlacesFailureReason,
+} from "./google-places-provider.ts";
+import {
+  validatePhotoMediaRequest,
+  validatePlaceSearchRequest,
+  validateTextPlaceSearchRequest,
+} from "./place-types.ts";
 
 /**
  * google-places: Google Places API (New) の Nearby Search(searchNearby)への
@@ -344,6 +353,83 @@ Deno.serve(async (req) => {
     parsed = bodyResult.text.length > 0 ? JSON.parse(bodyResult.text) : undefined;
   } catch {
     return errorResponse(400, "INVALID_JSON", "JSONの形式が正しくありません。", corsHeaders);
+  }
+
+  // modeが"text"/"photo"の場合のみそれぞれの分岐を通る(既存クライアントはmodeを送らないため、
+  // 未指定/"nearby"は今までどおりNearby Searchの検証・処理をそのまま通る)。
+  const requestedMode =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).mode
+      : undefined;
+  const isTextMode = requestedMode === "text";
+  const isPhotoMode = requestedMode === "photo";
+
+  if (isPhotoMode) {
+    const validation = validatePhotoMediaRequest(parsed);
+    if (!validation.ok) {
+      return errorResponse(400, "INVALID_REQUEST", "入力内容を確認してください。", corsHeaders);
+    }
+
+    try {
+      const outcome = await fetchPlacePhoto(validation.data.photoName, validation.data.maxWidthPx);
+      if (!outcome.ok) {
+        logOutcome(mapFailureReasonToLogLabel(outcome.reason).replace("google_places_", "google_places_photo_"));
+        const status =
+          outcome.reason === "budget_exceeded"
+            ? 503
+            : outcome.reason === "rate_limited"
+              ? 429
+              : outcome.reason === "timeout"
+                ? 504
+                : 502;
+        return errorResponse(
+          status,
+          "PLACE_PHOTO_FAILED",
+          "写真を取得できませんでした。しばらくしてからもう一度お試しください。",
+          corsHeaders
+        );
+      }
+
+      logOutcome("google_places_photo_success");
+      return jsonResponse(200, { ok: true, data: { photoUri: outcome.photoUri } }, corsHeaders);
+    } catch (error) {
+      logSafeError("fetchPlacePhoto failed", error);
+      return errorResponse(500, "INTERNAL_ERROR", "しばらくしてからもう一度お試しください。", corsHeaders);
+    }
+  }
+
+  if (isTextMode) {
+    const validation = validateTextPlaceSearchRequest(parsed);
+    if (!validation.ok) {
+      return errorResponse(400, "INVALID_REQUEST", "入力内容を確認してください。", corsHeaders);
+    }
+
+    try {
+      const outcome = await searchTextPlaces(validation.data);
+      if (!outcome.ok) {
+        logOutcome(mapFailureReasonToLogLabel(outcome.reason));
+        const status =
+          outcome.reason === "budget_exceeded"
+            ? 503
+            : outcome.reason === "rate_limited"
+              ? 429
+              : outcome.reason === "timeout"
+                ? 504
+                : 502;
+        return errorResponse(
+          status,
+          "PLACE_SEARCH_FAILED",
+          "場所を検索できませんでした。しばらくしてからもう一度お試しください。",
+          corsHeaders
+        );
+      }
+
+      logOutcome("google_places_text_success");
+      return jsonResponse(200, { ok: true, data: { places: outcome.places } }, corsHeaders);
+    } catch (error) {
+      logSafeError("searchTextPlaces failed", error);
+      return errorResponse(500, "INTERNAL_ERROR", "しばらくしてからもう一度お試しください。", corsHeaders);
+    }
   }
 
   const validation = validatePlaceSearchRequest(parsed);

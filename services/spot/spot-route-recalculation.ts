@@ -75,13 +75,17 @@ export async function recalculateSpotRouteWithGoogleRoutes(
   const distanceKm = Math.round((candidate.distanceMeters / 1000) * 10) / 10;
   const durationMinutes = Math.max(1, Math.ceil(candidate.durationSeconds / 60));
   const budget = resolveEffectiveTimeBudget(conditions, now);
-  const isWithinBudget = budget.ok && durationMinutes <= budget.minutes;
+  // budget.minutesがundefined(=時間指定なし)の場合は、超過しようのない状態として扱う。
+  const isWithinBudget = budget.ok && (budget.minutes === undefined || durationMinutes <= budget.minutes);
   // 時間予算超過はブロックせず警告のみに使う(呼び出し元は常に決定・ナビ操作を続行可能にすること)。
-  const budgetMessage = budget.ok
-    ? isWithinBudget
-      ? null
-      : `この寄り道をすると目安時間を約${durationMinutes - budget.minutes}分超えそうです。`
-    : budget.message;
+  let budgetMessage: string | null;
+  if (!budget.ok) {
+    budgetMessage = budget.message;
+  } else if (budget.minutes === undefined || isWithinBudget) {
+    budgetMessage = null;
+  } else {
+    budgetMessage = `この寄り道をすると目安時間を約${durationMinutes - budget.minutes}分超えそうです。`;
+  }
 
   return {
     ok: true,
@@ -90,7 +94,7 @@ export async function recalculateSpotRouteWithGoogleRoutes(
       selectedSpotIds: spots.map((spot) => spot.id),
       distanceKm,
       durationMinutes,
-      timeBudgetMinutes: budget.ok ? budget.minutes : null,
+      timeBudgetMinutes: budget.ok ? budget.minutes ?? null : null,
       isWithinBudget,
       budgetMessage,
       path,

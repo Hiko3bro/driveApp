@@ -17,9 +17,11 @@ import { MapPointPicker } from '@/components/location/map-point-picker';
 import { OptionChip } from '@/components/ui/option-chip';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { WizardProgressHeader } from '@/components/ui/wizard-progress-header';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { requestAiRoutePreferences, shouldRequestAiInterpretation } from '@/services/ai/route-planning-client';
 import { addSavedPlace, getSavedPlaces } from '@/services/location/saved-places-store';
+import { searchPlaceByText } from '@/services/spot/google-places-client';
 import { getRecentPlaces, recordRecentPlace } from '@/services/location/recent-places-store';
 import { RoutePlanningError } from '@/services/route';
 import { buildRouteOptionsFromDrivePlans } from '@/services/route/drive-plan-mapper';
@@ -49,6 +51,7 @@ import type {
   SavedPlace,
   ViaPoint,
 } from '@/types/location';
+import type { RouteOption } from '@/types/route';
 
 const AVAILABLE_TIME_OPTIONS = Object.keys(AVAILABLE_TIME_LABELS) as AvailableTime[];
 const MOOD_OPTIONS = Object.keys(MOOD_LABELS) as Mood[];
@@ -85,6 +88,14 @@ const MIN_CUSTOM_TOTAL_MINUTES = 15;
 
 /** drive-route-planner側のMIN_AVAILABLE_TIME_MINUTESと合わせる。これ未満では実ルート提案自体を呼ばない。 */
 const MIN_DRIVE_PLAN_MINUTES = 15;
+
+/**
+ * おまかせ目的地候補について、実測ルート時間が目標時間に対してこの比率未満なら、
+ * 単独ゴールとして採用しない(例: 120分指定で60分未満のgoalは近すぎるため除外)。
+ * 「AIのテーマ一致だけで採用せず、実測時間で見て目標時間に適した候補だけを昇格させる」
+ * という方針(実機で「地魚酒場」が近すぎるまま採用された不具合への対処)。
+ */
+const MIN_OMAKASE_GOAL_DURATION_RATIO = 0.5;
 
 /** AIに追加条件を伝えていない/AI結果が無い場合に使う、中立なデフォルト値。 */
 const DEFAULT_DRIVE_PLAN_PREFERENCES: DrivePlanPreferences = {
@@ -302,7 +313,7 @@ export default function ConditionsScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#0a7ea4" />
+          <ActivityIndicator size="large" color={Colors.accentBlue} />
         </View>
       </SafeAreaView>
     );
@@ -469,6 +480,9 @@ export default function ConditionsScreen() {
     setSubmitting(true);
     setStep('thinking');
     setConditions(nextConditions);
+    // 条件を変えて再送信するたびに、古い提案ルートを必ず無効化する(前回の候補を
+    // 引きずったまま新しい結果に見せかけない)。
+    setRoutes([]);
 
     try {
       // 「2時間」等の選択・帰着日時から、実際に使える時間予算(分)を確定する。
@@ -478,13 +492,25 @@ export default function ConditionsScreen() {
       if (!timeBudget.ok) {
         throw new RoutePlanningError(timeBudget.message);
       }
-      if (timeBudget.minutes < MIN_DRIVE_PLAN_MINUTES) {
+      // timeBudget.minutesがundefinedは「時間指定なし」を意味し、下限チェックの対象外。
+      if (timeBudget.minutes !== undefined && timeBudget.minutes < MIN_DRIVE_PLAN_MINUTES) {
         throw new RoutePlanningError(
           '選んだ時間・帰着日時では、実際のルートを作成するには短すぎます。時間か帰着日時を変更してください。'
         );
       }
 
       let planPreferences: DrivePlanPreferences = DEFAULT_DRIVE_PLAN_PREFERENCES;
+      let biasPoint: Coordinates | undefined;
+      // 「おまかせ」の場合、AIは性格の異なる最大3件の検索意図(例:「夜景スポット」
+      // 「高原の展望台」「温泉」)を返す。「AIが1件だけ勝手に決める」のではなく、
+      // 実在確認できた候補をすべてrequestDrivePlansへ個別に渡し、体験の異なる
+      // 複数のゴールへの実ルートをそのままルート比較画面(既存の3案比較UI)で
+      // 選べるようにする(新しい選択専用画面は今回追加しない)。
+      const aiSuggestedDestinationCandidates: PlaceSelection[] = [];
+      // 「夜景スポット」等の一般的な語句が出発地点から無関係に離れた場所へマッチしない
+      // よう、Text Search全般に出発地点周辺への重み付けをかける(架空の座標を作るのではなく、
+      // 実在検索の「優先範囲」を絞るだけ)。
+      const textSearchBias = { center: departure.coordinates, radiusMeters: 50_000 };
 
       if (willUseAi) {
         // AIには構造化条件と自由記述だけを送る(座標・住所・保存場所・GPS履歴は送らない)。
@@ -496,6 +522,54 @@ export default function ConditionsScreen() {
             planPreferences = toDrivePlanPreferences(outcome.result.preferences);
             if (outcome.result.fallback) {
               setAiNotice('AIで追加条件を整理できませんでした。入力済みの条件でルートを探します。');
+            }
+            // 「生駒を走りたい」等の強い地理的希望をAIが検索意図(地名)として返した場合、
+            // AIが座標を創作することはないため、ここでGoogle Places Text Search経由で
+            // 実在確認してからbiasPointとして使う(見つからなくても致命的エラーにはせず、
+            // biasPoint無しで通常どおり続行する)。
+            const requestedAreaQuery = outcome.result.preferences.requestedAreaQuery;
+            if (requestedAreaQuery) {
+              const placeOutcome = await searchPlaceByText(requestedAreaQuery, 1, textSearchBias);
+              if (isMountedRef.current && placeOutcome.ok && placeOutcome.places.length > 0) {
+                const place = placeOutcome.places[0];
+                biasPoint = { latitude: place.latitude, longitude: place.longitude };
+              }
+              if (__DEV__) {
+                // 調査用。地名文字列・座標は出さない(見つかったかどうかのみ)。
+                console.log('[conditions] requestedAreaQuery resolution', { resolved: Boolean(biasPoint) });
+              }
+            }
+            // 最終地点「おまかせ」の場合、AIが考えた最大3件の「立ち寄り先のタイプ」の
+            // 検索語句を、それぞれGoogle Placesで実在確認する(AIは具体的な店舗・施設名を
+            // 創作しない)。1件も見つからなければ致命的エラーにはせず、通常のループ
+            // (出発地点に戻る)へ安全にフォールバックする。
+            if (nextConditions.returnTarget === 'ai-suggested') {
+              const goalQueries = [
+                outcome.result.preferences.suggestedGoalQuery,
+                outcome.result.preferences.suggestedGoalQueryAlt1,
+                outcome.result.preferences.suggestedGoalQueryAlt2,
+              ].filter((query): query is string => Boolean(query));
+
+              for (const query of goalQueries) {
+                const goalOutcome = await searchPlaceByText(query, 1, textSearchBias);
+                if (!isMountedRef.current || !goalOutcome.ok || goalOutcome.places.length === 0) {
+                  continue;
+                }
+                const place = goalOutcome.places[0];
+                // 既に採用した候補と同一の実在地点(名前)なら重複させない。
+                if (!aiSuggestedDestinationCandidates.some((candidate) => candidate.label === place.name)) {
+                  aiSuggestedDestinationCandidates.push({
+                    label: place.name,
+                    coordinates: { latitude: place.latitude, longitude: place.longitude },
+                  });
+                }
+              }
+              if (__DEV__) {
+                // 調査用。地名文字列・座標は出さない(件数のみ)。
+                console.log('[conditions] suggestedGoalQuery resolution', {
+                  candidateCount: aiSuggestedDestinationCandidates.length,
+                });
+              }
             }
           } else {
             setAiInterpretation(null);
@@ -515,31 +589,88 @@ export default function ConditionsScreen() {
       // しない)。座標はplanning session内の実データ(出発地点・実際に選んだ目的地・
       // 実際に追加した経由地点)のみを送り、新しく座標を捏造しない。ユーザーが指定した
       // viaPointsは常にそのまま渡し、削除・並べ替え・候補地点との置き換えは行わない。
-      const finalDestination = nextConditions.finalDestination;
+      let finalDestination: PlaceSelection | undefined = nextConditions.finalDestination;
+      let routeOptions: RouteOption[] = [];
+      let overBudgetForLog = false;
+      let searchRoundsForLog: number | undefined;
 
-      const planOutcome = await requestDrivePlans({
-        origin: departure.coordinates,
-        destination: finalDestination?.coordinates,
-        userViaPoints: nextConditions.viaPoints.map((point) => point.coordinates),
-        returnTarget: finalDestination ? 'different' : 'same-as-departure',
-        availableTimeMinutes: timeBudget.minutes,
-        preferences: planPreferences,
-      });
-
-      if (!planOutcome.ok) {
-        // 実APIの失敗時に、架空のmock routeを「本物のルート」として黙って表示しない。
-        throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
+      if (!finalDestination && aiSuggestedDestinationCandidates.length > 0) {
+        // 「おまかせ」: 実在確認できた候補ごとに個別にルートを実測し、体験の異なる
+        // 複数のゴールを、既存のルート比較画面(3案比較UI)でそのまま選べるようにする
+        // (新しい選択専用画面は今回追加しない)。1件の候補が失敗しても他の候補は
+        // 引き続き試す(致命的エラーにはしない)。
+        for (let i = 0; i < aiSuggestedDestinationCandidates.length; i++) {
+          const candidate = aiSuggestedDestinationCandidates[i];
+          const candidateOutcome = await requestDrivePlans({
+            origin: departure.coordinates,
+            destination: candidate.coordinates,
+            userViaPoints: nextConditions.viaPoints.map((point) => point.coordinates),
+            returnTarget: 'different',
+            availableTimeMinutes: timeBudget.minutes,
+            preferences: planPreferences,
+            biasPoint,
+          });
+          if (!candidateOutcome.ok || candidateOutcome.plans.length === 0) {
+            continue;
+          }
+          // テーマ一致だけで採用せず、実測時間が目標時間に対して近すぎるゴールは
+          // 単独候補として採用しない(セクション2: 「地魚酒場」が近すぎるまま採用された不具合)。
+          if (timeBudget.minutes !== undefined) {
+            const candidateDurationMinutes = candidateOutcome.plans[0].durationSeconds / 60;
+            if (candidateDurationMinutes / timeBudget.minutes < MIN_OMAKASE_GOAL_DURATION_RATIO) {
+              continue;
+            }
+          }
+          // 候補ごとに最良の1件(先頭)だけを採用する(同じ候補内でのバリエーションより、
+          // 候補間の違い= ゴール自体の違いを優先するため)。
+          const candidateOptions = buildRouteOptionsFromDrivePlans([candidateOutcome.plans[0]], candidateOutcome.meta, {
+            departureLabel: departure.label,
+            destinationLabel: candidate.label,
+            userViaPoints: nextConditions.viaPoints.map((point) => ({ label: point.label, coordinates: point.coordinates })),
+            avoidHighwaysApplied: planPreferences.avoidHighways,
+          });
+          for (const option of candidateOptions) {
+            routeOptions.push({ ...option, id: `omakase-${i}-${option.id}`, name: candidate.label });
+          }
+          overBudgetForLog = overBudgetForLog || candidateOutcome.meta.overBudget;
+        }
+        if (routeOptions.length > 0) {
+          // 代表としてログ・エラーメッセージ用に1件目を入れておく(実際の目的地は
+          // ルートごとに異なる)。
+          finalDestination = aiSuggestedDestinationCandidates[0];
+        }
       }
 
-      const routeOptions = buildRouteOptionsFromDrivePlans(planOutcome.plans, planOutcome.meta, {
-        departureLabel: departure.label,
-        destinationLabel: finalDestination?.label,
-        userViaPoints: nextConditions.viaPoints.map((point) => ({
-          label: point.label,
-          coordinates: point.coordinates,
-        })),
-        avoidHighwaysApplied: planPreferences.avoidHighways,
-      });
+      if (routeOptions.length === 0) {
+        // 通常の単一目的地(指定なし=出発地点に戻るループ/別の場所/おまかせが1件も
+        // 解決できなかった場合はここへ安全にフォールバックする)。
+        const planOutcome = await requestDrivePlans({
+          origin: departure.coordinates,
+          destination: finalDestination?.coordinates,
+          userViaPoints: nextConditions.viaPoints.map((point) => point.coordinates),
+          returnTarget: finalDestination ? 'different' : 'same-as-departure',
+          availableTimeMinutes: timeBudget.minutes,
+          preferences: planPreferences,
+          biasPoint,
+        });
+
+        if (!planOutcome.ok) {
+          // 実APIの失敗時に、架空のmock routeを「本物のルート」として黙って表示しない。
+          throw new RoutePlanningError('ルートを取得できませんでした。もう一度お試しください。');
+        }
+
+        routeOptions = buildRouteOptionsFromDrivePlans(planOutcome.plans, planOutcome.meta, {
+          departureLabel: departure.label,
+          destinationLabel: finalDestination?.label,
+          userViaPoints: nextConditions.viaPoints.map((point) => ({
+            label: point.label,
+            coordinates: point.coordinates,
+          })),
+          avoidHighwaysApplied: planPreferences.avoidHighways,
+        });
+        overBudgetForLog = planOutcome.meta.overBudget;
+        searchRoundsForLog = planOutcome.meta.searchRoundsUsed;
+      }
 
       if (routeOptions.length === 0) {
         throw new RoutePlanningError(
@@ -560,14 +691,17 @@ export default function ConditionsScreen() {
         }).length;
         console.log('[conditions] drive plan result', {
           hasDestination: Boolean(finalDestination),
+          isOmakaseMultiGoal: aiSuggestedDestinationCandidates.length > 0 && !nextConditions.finalDestination,
           userViaPointCount: nextConditions.viaPoints.length,
           planCount: routeOptions.length,
           usedSuggestedPlace: routeOptions.some((route) => Boolean(route.suggestedPlace)),
           routeSources: routeOptions.map((route) => route.source),
-          overBudget: planOutcome.meta.overBudget,
-          searchRoundsUsed: planOutcome.meta.searchRoundsUsed,
+          overBudget: overBudgetForLog,
+          searchRoundsUsed: searchRoundsForLog,
           inIdealTimeBandCount,
           durationMinutesList: routeOptions.map((route) => route.durationMinutes),
+          biasApplied: Boolean(biasPoint),
+          nearbySuggestionCounts: routeOptions.map((route) => route.nearbySuggestions?.length ?? 0),
         });
       }
 
@@ -638,7 +772,7 @@ export default function ConditionsScreen() {
               value={viaNameText}
               onChangeText={setViaNameText}
               placeholder="指定した場所"
-              placeholderTextColor="#9aa5ab"
+              placeholderTextColor={Colors.textTertiary}
             />
             <Pressable
               style={styles.toggleRow}
@@ -760,6 +894,11 @@ export default function ConditionsScreen() {
                   )}
                 </View>
               )}
+              {returnTarget === 'ai-suggested' && (
+                <Text style={styles.subtleText}>
+                  気分・時間・季節から、AIが実在するゴールを1つ提案します(架空の場所は作りません)。
+                </Text>
+              )}
             </>
           )}
 
@@ -863,7 +1002,7 @@ export default function ConditionsScreen() {
                 value={aiNote}
                 onChangeText={setAiNote}
                 placeholder="AIに伝えたいことを自由に書いてください(任意)"
-                placeholderTextColor="#9aa5ab"
+                placeholderTextColor={Colors.textTertiary}
                 multiline
                 textAlignVertical="top"
               />
@@ -891,7 +1030,13 @@ export default function ConditionsScreen() {
               />
               <ConfirmRow
                 label="最後"
-                value={returnTarget === 'same-as-departure' ? '出発地点に戻る' : finalDestination?.label ?? '未選択'}
+                value={
+                  returnTarget === 'same-as-departure'
+                    ? '出発地点に戻る'
+                    : returnTarget === 'ai-suggested'
+                      ? 'おまかせ(AIが提案)'
+                      : (finalDestination?.label ?? '未選択')
+                }
                 onEdit={() => goToStep('destination', true)}
               />
               <ConfirmRow
@@ -921,7 +1066,7 @@ export default function ConditionsScreen() {
 
           {step === 'thinking' && (
             <View style={styles.thinkingBox}>
-              <ActivityIndicator size="large" color="#0a7ea4" />
+              <ActivityIndicator size="large" color={Colors.accentBlue} />
               <Text style={styles.heading}>あなたに合うドライブを考えています</Text>
               <View style={styles.thinkingList}>
                 {thinkingUsesAi && (
@@ -990,7 +1135,7 @@ function NumberField({
         onBlur={() => onChangeText(String(clampInt(value, min, max)))}
         keyboardType="number-pad"
         placeholder={placeholder}
-        placeholderTextColor="#9aa5ab"
+        placeholderTextColor={Colors.textTertiary}
       />
       <Text style={styles.timeInputUnit}>{label}</Text>
     </View>
@@ -1029,16 +1174,16 @@ function ChipRow({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   flex: {
     flex: 1,
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    gap: 12,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xl,
+    gap: Spacing.md,
   },
   centerContent: {
     flex: 1,
@@ -1046,24 +1191,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   heading: {
-    fontSize: 20,
+    fontSize: Typography.screenTitle.fontSize - 8,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   subtleText: {
-    fontSize: 13,
-    color: '#8b959c',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
     lineHeight: 19,
   },
   section: {
-    marginTop: 8,
-    gap: 8,
+    marginTop: Spacing.sm,
+    gap: Spacing.sm,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#11181C',
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
   },
   chipRow: {
     flexDirection: 'row',
@@ -1072,117 +1217,117 @@ const styles = StyleSheet.create({
   timeInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    marginTop: 4,
+    gap: Spacing.lg,
+    marginTop: Spacing.xs,
   },
   timeInputField: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.sm,
   },
   timeInputBox: {
     minHeight: 46,
-    borderRadius: 12,
+    borderRadius: Radius.md,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.sm,
     fontSize: 16,
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'center',
   },
   timeInputUnit: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     fontWeight: '600',
-    color: '#334',
+    color: Colors.textSecondary,
   },
   destinationBox: {
-    gap: 10,
-    marginTop: 4,
+    gap: Spacing.sm + 2,
+    marginTop: Spacing.xs,
   },
   viaList: {
-    gap: 8,
-    marginBottom: 4,
+    gap: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   viaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 12,
+    borderRadius: Radius.md,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg - 2,
   },
   viaLabel: {
-    fontSize: 14,
-    color: '#11181C',
+    fontSize: Typography.body.fontSize,
+    color: Colors.textPrimary,
     fontWeight: '600',
   },
   noteField: {
     minHeight: 140,
-    borderRadius: 14,
+    borderRadius: Radius.lg,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 14,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg - 2,
     fontSize: 15,
-    color: '#11181C',
+    color: Colors.textPrimary,
     lineHeight: 22,
   },
   textField: {
     minHeight: 48,
-    borderRadius: 12,
+    borderRadius: Radius.md,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    paddingHorizontal: 14,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.lg - 2,
     fontSize: 15,
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 4,
+    gap: Spacing.sm + 2,
+    marginTop: Spacing.xs,
   },
   checkbox: {
     width: 22,
     height: 22,
-    borderRadius: 6,
+    borderRadius: Radius.sm - 2,
     borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surface,
   },
   checkboxChecked: {
-    backgroundColor: '#0a7ea4',
-    borderColor: '#0a7ea4',
+    backgroundColor: Colors.accentBlue,
+    borderColor: Colors.accentBlue,
   },
   toggleLabel: {
-    fontSize: 14,
-    color: '#334',
+    fontSize: Typography.body.fontSize,
+    color: Colors.textSecondary,
   },
   confirmHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
   },
   backLabel: {
-    fontSize: 14,
-    color: '#0a7ea4',
+    fontSize: Typography.body.fontSize,
+    color: Colors.accentBlue,
     fontWeight: '600',
   },
   confirmRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    borderRadius: 14,
+    borderRadius: Radius.lg,
     borderWidth: 1.5,
-    borderColor: '#eef2f3',
-    backgroundColor: '#fafbfb',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    gap: 8,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.surfaceSubtle,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg - 2,
+    gap: Spacing.sm,
   },
   confirmRowText: {
     flex: 1,
@@ -1190,17 +1335,17 @@ const styles = StyleSheet.create({
   },
   confirmLabel: {
     fontSize: 12,
-    color: '#8b959c',
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   confirmValue: {
     fontSize: 15,
-    color: '#11181C',
+    color: Colors.textPrimary,
     fontWeight: '600',
   },
   confirmEdit: {
-    fontSize: 13,
-    color: '#0a7ea4',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.accentBlue,
     fontWeight: '700',
   },
   thinkingBox: {
@@ -1208,34 +1353,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 40,
-    gap: 20,
+    gap: Spacing.xl - 4,
   },
   thinkingList: {
-    gap: 10,
+    gap: Spacing.sm + 2,
     alignSelf: 'stretch',
   },
   thinkingItem: {
-    fontSize: 14,
-    color: '#b7c0c4',
+    fontSize: Typography.body.fontSize,
+    color: Colors.textTertiary,
     textAlign: 'center',
   },
   thinkingItemActive: {
-    color: '#0a7ea4',
+    color: Colors.accentBlue,
     fontWeight: '600',
   },
   footer: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 16,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.lg,
   },
   noticeText: {
-    color: '#7a5b18',
+    color: Colors.warning,
     fontSize: 12,
     lineHeight: 17,
   },
   errorText: {
-    color: '#c0392b',
-    fontSize: 13,
+    color: Colors.accentRed,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 19,
   },
 });

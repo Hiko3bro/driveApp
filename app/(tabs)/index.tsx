@@ -4,25 +4,26 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { PrimaryButton } from '@/components/ui/primary-button';
-import { SelectionCard } from '@/components/ui/selection-card';
+import { ActionCard } from '@/components/ui/action-card';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
-import { getTrips } from '@/services/trip/trip-store';
-import type { Trip } from '@/types/trip';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
+import { getDrivePlans } from '@/services/drive-plan/drive-plan-store';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
+import type { SavedDrivePlan } from '@/types/drive-plan';
 
 const MAX_PREVIEW_ITEMS = 2;
 
 export default function HomeScreen() {
   const { resetPlanningSession, diaryEntries, selectDiaryEntry } = useDriveFlow();
-  const [trips, setTrips] = useState<Trip[]>([]);
+  const [drivePlans, setDrivePlans] = useState<SavedDrivePlan[]>([]);
 
-  // タブへ戻るたびに最新の旅行一覧を読み直す(旅行プランタブで作成・削除した内容を反映する)。
+  // タブへ戻るたびに最新のドライブ計画一覧を読み直す(ドライブ計画タブで作成・削除した内容を反映する)。
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      getTrips().then((loaded) => {
+      getDrivePlans().then((loaded) => {
         if (active) {
-          setTrips(loaded);
+          setDrivePlans(loaded);
         }
       });
       return () => {
@@ -44,27 +45,32 @@ export default function HomeScreen() {
   };
 
   const recentDiaryEntries = [...diaryEntries].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_PREVIEW_ITEMS);
-  const upcomingTrips = trips.slice(0, MAX_PREVIEW_ITEMS);
+  const recentDrivePlans = drivePlans.slice(0, MAX_PREVIEW_ITEMS);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.appName}>ドライブ発見</Text>
+          <Text style={styles.hero}>今日はどこへ走る?</Text>
           <Text style={styles.tagline}>何気ない時間や移動を、新しい発見と思い出に変えるアプリです。</Text>
         </View>
 
-        <PrimaryButton label="今からドライブ" onPress={handleStartNewDrive} />
-        <Text style={styles.mainCtaHint}>出発地点を選ぶところから、すぐに始められます</Text>
+        <ActionCard
+          icon="car-sport"
+          title="今ドラ"
+          description="今から走る。出発地点を選ぶところから、すぐに始められます"
+          onPress={handleStartNewDrive}
+          large
+        />
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>旅行のドライブを計画</Text>
-          <SelectionCard
-            title="旅行プランを作る・開く"
-            subtitle="複数日の旅行を、1日ごとに出発地点・寄りたい場所・使える時間から計画できます"
-            onPress={() => router.push('/trips')}
-          />
-        </View>
+        <View style={styles.gap} />
+
+        <ActionCard
+          icon="map-outline"
+          title="ドライブ計画"
+          description="今度走る・旅先で探す。AIと相談しながら気になる場所を見つけられます"
+          onPress={() => router.push('/trips')}
+        />
 
         {recentDiaryEntries.length > 0 && (
           <View style={styles.section}>
@@ -79,10 +85,11 @@ export default function HomeScreen() {
               </Pressable>
             </View>
             {recentDiaryEntries.map((entry) => (
-              <SelectionCard
+              <ActionCard
                 key={entry.id}
+                icon="book-outline"
                 title={entry.title}
-                subtitle={`${entry.date} ・ ${entry.distanceKm}km`}
+                description={`${entry.date} ・ ${formatDistanceLabel(entry.distanceKm)}`}
                 onPress={() => handleOpenDiaryEntry(entry.id)}
               />
             ))}
@@ -91,28 +98,29 @@ export default function HomeScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>保存中の旅行プラン</Text>
-            {trips.length > 0 && (
+            <Text style={styles.sectionTitle}>保存中のドライブ計画</Text>
+            {drivePlans.length > 0 && (
               <Pressable
                 onPress={() => router.push('/trips')}
                 accessibilityRole="button"
-                accessibilityLabel="旅行プランをすべて見る"
+                accessibilityLabel="ドライブ計画をすべて見る"
                 hitSlop={8}>
                 <Text style={styles.sectionLink}>すべて見る</Text>
               </Pressable>
             )}
           </View>
-          {upcomingTrips.length > 0 ? (
-            upcomingTrips.map((trip) => (
-              <SelectionCard
-                key={trip.id}
-                title={trip.title}
-                subtitle={`${trip.startDate} 〜 ${trip.endDate} ・ ${trip.days.length}日間`}
-                onPress={() => router.push({ pathname: '/trip-detail', params: { tripId: trip.id } })}
+          {recentDrivePlans.length > 0 ? (
+            recentDrivePlans.map((plan) => (
+              <ActionCard
+                key={plan.id}
+                icon="navigate-outline"
+                title={plan.title}
+                description={`${plan.areaName ? `${plan.areaName} ・ ` : ''}${plan.dateText ?? '時期未定'}`}
+                onPress={() => router.push({ pathname: '/drive-plan-chat', params: { savedPlanId: plan.id } })}
               />
             ))
           ) : (
-            <Text style={styles.emptyHint}>まだ旅行プランがありません</Text>
+            <Text style={styles.emptyHint}>まだドライブ計画がありません</Text>
           )}
         </View>
       </ScrollView>
@@ -123,57 +131,55 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 20,
-    gap: 4,
+    padding: Spacing.xl,
+    paddingTop: Spacing.md,
+    gap: Spacing.md,
   },
   header: {
-    marginBottom: 20,
+    marginBottom: Spacing.sm,
   },
-  appName: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 8,
+  hero: {
+    fontSize: Typography.screenTitle.fontSize,
+    fontWeight: Typography.screenTitle.fontWeight,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   tagline: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#5b6770',
+    fontSize: Typography.body.fontSize,
+    lineHeight: Typography.body.lineHeight,
+    color: Colors.textSecondary,
   },
-  mainCtaHint: {
-    fontSize: 12,
-    color: '#8b959c',
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 8,
+  gap: {
+    height: Spacing.sm,
   },
   section: {
-    marginTop: 24,
+    marginTop: Spacing.xl,
+    gap: Spacing.sm,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 10,
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
   },
   sectionLink: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     fontWeight: '600',
-    color: '#0a7ea4',
+    color: Colors.accentBlue,
   },
   emptyHint: {
-    fontSize: 13,
-    color: '#8b959c',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textTertiary,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceSubtle,
+    padding: Spacing.lg,
   },
 });

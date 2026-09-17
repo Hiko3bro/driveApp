@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import type { Coordinates, MapRegion } from '@/types/location';
 
 export interface MapMarkerSpec {
@@ -52,7 +53,7 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
 
     return (
       <View style={[styles.container, style]}>
-        <Text style={styles.title}>地図はモバイル端末でご確認ください</Text>
+        <Text style={styles.title} accessibilityRole="header">地図はモバイル端末でご確認ください</Text>
         <Text style={styles.description}>
           react-native-mapsはWeb未対応のため、Web版では地図を表示できません。正式な検証対象であるiOS実機でご確認ください。
         </Text>
@@ -73,29 +74,30 @@ export const DriveMapView = forwardRef<DriveMapViewHandle, DriveMapViewProps>(
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    borderRadius: 16,
-    backgroundColor: '#eef2f3',
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: Spacing.xl,
   },
   title: {
     fontWeight: '600',
-    fontSize: 16,
-    marginBottom: 8,
+    fontSize: Typography.cardTitle.fontSize,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
     textAlign: 'center',
   },
   description: {
-    fontSize: 13,
-    color: '#556',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: Spacing.md,
   },
   markerList: {
     alignSelf: 'stretch',
   },
   markerItem: {
-    fontSize: 13,
-    color: '#334',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
   },
 });

@@ -1,8 +1,8 @@
 import { haversineDistanceKm, isValidCoordinates } from '@/services/location/coordinates';
-import { searchNearbyPlaces, type PlaceCandidate } from '@/services/spot/google-places-client';
+import { searchNearbyPlaces, type PlaceCandidate, type PlaceSearchCategory } from '@/services/spot/google-places-client';
 import {
   SpotDiscoveryError,
-  type PlaceSearchCategory,
+  type PlaceSearchCategory as SpotDiscoveryCategory,
   type SpotProvider,
   type SpotSearchParams,
 } from '@/services/spot/spot-provider';
@@ -32,12 +32,14 @@ const MIN_EXTRA_MINUTES = 3;
 /** ルートPolyline上でスポットを検索するアンカー地点(区間の何%地点か)。 */
 const ROUTE_ANCHOR_FRACTIONS = [0.25, 0.5, 0.75];
 
-const CATEGORY_TO_SPOT_CATEGORY: Record<PlaceSearchCategory, SpotCategory> = {
+export const CATEGORY_TO_SPOT_CATEGORY: Record<PlaceSearchCategory, SpotCategory> = {
   restaurant: 'ごはん',
   cafe: 'カフェ',
   scenic: '絶景',
   onsen: '温泉',
   activity: 'アクティビティ',
+  history: '歴史',
+  market: '市場',
 };
 
 /** app/spot-discovery.tsxがカテゴリチップ(具体カテゴリ)からGoogle Places側のenumへ変換するための逆引き。 */
@@ -47,6 +49,24 @@ export const SPOT_CATEGORY_TO_PLACE_CATEGORY: Record<SpotCategory, PlaceSearchCa
   絶景: 'scenic',
   温泉: 'onsen',
   アクティビティ: 'activity',
+  歴史: 'history',
+  市場: 'market',
+};
+
+/**
+ * カテゴリ別の説明文テンプレート。Google Placesからは店名・座標・カテゴリ程度しか
+ * 取得していない(rating等のEnterprise系フィールドは意図的に要求していない)ため、
+ * 個別の実データではなくカテゴリに基づく一般的な説明にとどめる。AIによる個別の
+ * 説明生成は行わない(取得していない情報を創作しない)。
+ */
+const CATEGORY_DESCRIPTIONS: Record<SpotCategory, string> = {
+  ごはん: '食事に立ち寄れるお店です。',
+  カフェ: '休憩にちょうどいいカフェです。',
+  絶景: '景色を楽しめるスポットです。',
+  温泉: '立ち寄れる温泉・入浴施設です。',
+  アクティビティ: '体験・アクティビティを楽しめる場所です。',
+  歴史: '歴史や文化を感じられる場所です。',
+  市場: '地元の食や物産に出会える市場です。',
 };
 
 /**
@@ -54,7 +74,7 @@ export const SPOT_CATEGORY_TO_PLACE_CATEGORY: Record<SpotCategory, PlaceSearchCa
  * あれば先頭を使い、無ければscenicを既定にする(drive-route-planner側の
  * カテゴリ選定と同じ優先順位)。
  */
-export function resolvePreferredSpotCategory(preferences?: AiRoutePreferences): PlaceSearchCategory {
+export function resolvePreferredSpotCategory(preferences?: AiRoutePreferences): SpotDiscoveryCategory {
   if (preferences && preferences.desiredStops.length > 0) {
     return preferences.desiredStops[0];
   }
@@ -105,12 +125,13 @@ function toSpot(candidate: PlaceCandidate, category: SpotCategory, anchor: Coord
     id: candidate.id,
     name: candidate.name,
     category,
-    description: '実在するスポットです。',
+    description: CATEGORY_DESCRIPTIONS[category],
     extraMinutes,
     extraDistanceKm,
     coordinates,
-    recommendation: 'ルート沿いから立ち寄りやすい場所です。',
+    recommendation: `ルートから寄り道すると、往復約${extraDistanceKm}kmです。`,
     isMock: false,
+    photoRef: candidate.photoRef,
   };
 }
 

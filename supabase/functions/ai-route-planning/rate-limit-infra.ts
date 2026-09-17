@@ -84,17 +84,24 @@ export async function hmacSha256Hex(value: string, secret: string): Promise<stri
     .join("");
 }
 
-export type ExternalApiName = "openai" | "google-routes" | "google-places";
+export type ExternalApiName = "openai" | "google-routes" | "google-places" | "google-places-photo";
 
 /** 将来、外部API呼び出し直前でcheckExternalApiBudget()から参照する1日あたりの上限。 */
 const OPENAI_DAILY_LIMIT = readPositiveIntEnv("OPENAI_DAILY_LIMIT", 5_000);
 const GOOGLE_ROUTES_DAILY_LIMIT = readPositiveIntEnv("GOOGLE_ROUTES_DAILY_LIMIT", 5_000);
 const GOOGLE_PLACES_DAILY_LIMIT = readPositiveIntEnv("GOOGLE_PLACES_DAILY_LIMIT", 300);
+/**
+ * 検索(google-places)とは別カウンタ。候補カードの写真表示(Photo Media)用で、
+ * 検索予算を圧迫しないよう独立させている。表示された候補分だけ・1Place1枚・
+ * クライアント側キャッシュ済みの呼び出しのみを想定した上限。
+ */
+const GOOGLE_PLACES_PHOTO_DAILY_LIMIT = readPositiveIntEnv("GOOGLE_PLACES_PHOTO_DAILY_LIMIT", 500);
 
 const EXTERNAL_API_DAILY_LIMITS: Record<ExternalApiName, number> = {
   openai: OPENAI_DAILY_LIMIT,
   "google-routes": GOOGLE_ROUTES_DAILY_LIMIT,
   "google-places": GOOGLE_PLACES_DAILY_LIMIT,
+  "google-places-photo": GOOGLE_PLACES_PHOTO_DAILY_LIMIT,
 };
 
 /**

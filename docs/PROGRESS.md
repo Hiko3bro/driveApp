@@ -21,6 +21,496 @@
 
 ---
 
+## 2026-09-17g (Photo API真のlazy load・Spot Card整理・選択済みRoute維持でのOptional Stop追加)
+
+`feature/100-program-finalization` ブランチで、実機テストで見つかった複数の重大な不具合(1. Photo API request暴走・非表示Spotへの写真取得・同一Placeの重複取得、2. 今ドラSpot CardのUI重複・重なり、3. 選択済みRouteへOptional Stopを追加すると元Routeの主要構成が失われる重大な不具合、4. Route Compare/warning UIの密度・強さ、5. チップサイズ、6. 「半日」の解釈ゆれ)を修正した(commit・pushは未実施)。検索品質自体の大規模な再設計・新機能追加・高沢さんコード統合は今回行っていない。
+
+前のセッション(Photo APIのqueue/session上限導入、Spot Card写真上下の重複解消、`lockToProvidedStops`サーバーフラグの追加)からの続きで、実機再テストの結果「session上限で無理やり止まっているだけで、非表示のPlaceまでrequest自体は発生し続けている」「温泉追加で選択していたRouteそのものが失われる(直行ルート化)」という、より深い根本原因が新たに見つかったため、その修正が中心。
+
+### 完了したこと
+
+- **Photo APIの真のlazy load化**: `services/spot/place-photo-cache.ts`の`useCandidatePhoto`に`visible: boolean`引数を追加し、visible=falseの間は`resolveCachedPhoto`自体を呼ばない(queueへも積まない)ようにした。以前はqueueの優先度(high/low)を分けているだけで、表示されているかに関わらず候補分すべてが即座にfetch要求されていた(=遅延実行であってlazy loadではなかった)。`app/spot-discovery.tsx`は1画面1枚のpaging carousel構造のため、`Math.abs(index - selectedIndex) <= 1`(現在表示中のカード+前後1件)だけをvisible扱いにし、それ以外はスクロールで近づくまで一切fetchしないようにした
+- **Photo cacheのログ拡充**: `place-photo-cache.ts`のdevStatsに`visibleRequestCount`(可視化されてfetchを要求した回数)・`maxQueueSize`(同時queue最大件数)を追加し、`uniquePlaces`(要求された一意のPlace数)も含めて`__DEV__`ログへ出すようにした(Place名・座標・APIキーは含めない、件数のみ)
+- **今ドラSpot Cardの重なり対策**: 実機で地図・候補カード・下部の操作ボタンが競合して詰まって見える不具合について、地図の最小高さ(180→130)とコンパクト表示時の写真の縦横比(16:10→16:9)を縮小し、下部要素により確実にスペースを譲るようにした。あわせて`PlaceInfoOverlay`にcompact時は説明文を最大1行に切り詰める`compact`引数を追加した(写真上は場所名を優先)
+- **カテゴリチップのサイズ固定**: `components/ui/option-chip.tsx`で選択時に`fontWeight`を700へ変えていたのを、常に600固定にした(太字化で文字幅が変わりchipが一瞬大きくなったように見える不具合の修正)。選択状態はborder・background・文字色のみで表現する
+- **【最重要】選択済みRouteへのOptional Stop追加の再修正**: 前回導入した`lockToProvidedStops`(サーバー側で追加anchor探索をスキップし、指定した経由地点だけを通る基本ルートを返すフラグ)自体は正しい設計だが、その「指定した経由地点」の中に前回選択していたRouteのanchor(海沿い・山道等のHard Themeを成立させている実在スポット)を含める処理(`getPreservedAnchorsForActiveRoute()`)が、サーバーの基本ルート(`toBasePlan`)が`suggestedPlace`を返さない(=anchorの名前情報を持たない)ことと組み合わさり、2件目以降のOptional Stop追加でanchorの情報が消えてしまう(=温泉だけの直行ルートに近づいていく)構造的な不具合を特定した。`app/drive-plan-chat.tsx`の`generateRoutes()`で、preservedAnchors(`NamedAnchor[]`、座標+名前)をサーバーへ送る基本ルート計算の材料にするだけでなく、クライアント側で組み立てる`RouteOption.waypoints`のラベルとしても明示的に付け直すよう変更し、Optional Stopを何件追加してもanchorの名前・座標が次のRouteOptionへ自己修復的に引き継がれるようにした
+- **「このルートで」の明示的なmodify強制**: `app/drive-plan-chat.tsx`の`performChatRequest`に、AIの`nextAction`判定だけに頼らないclient側のガードを追加した。「このルートで」「今のルートに」等の表現があるのにAIが`generate_routes`(ゼロから再生成)を返した場合は`modify_routes`へ強制的に読み替え、逆に「目的地を◯◯に変更して」等の明示的な変更表現が無いのに`destinationQuery`が返ってきた場合は、それを無視して単なるOptional Stop追加として扱うようにした(「温泉追加して」だけでprincipal goalが勝手に変わることを防ぐ)
+- **半日の分数統一**: `supabase/functions/ai-trip-chat/openai-provider.ts`のプロンプトに、「半日」=360分・「1日」=1440分等の分数を明記した(既存の今すぐドライブ機能`services/route/time-budget.ts`の`AVAILABLE_TIME_MINUTES`と同じ定義)。会話のたびにAIが異なる分数を推測しないようにした
+- **Route Compare UIの整理**: `app/route-compare.tsx`の警告表示(「目安時間より短めのルートです」等)を、目立つ赤背景のboxからcaption程度の目立たない1行表示へ変更した。カードの情報量も減らし(補助的なtag行を削除、paddingを縮小)、縦の間延びを抑えた
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`・`npx expo export --platform android` すべて成功
+- 変更したEdge Function(`ai-trip-chat`、プロンプトのみ)を`npx supabase functions deploy ai-trip-chat`でデプロイ済み。`drive-route-planner`は今回コード変更していないため再デプロイ不要(前回セッションで`lockToProvidedStops`実装済みのものが既にデプロイ済み)
+- `removeStopIds`/`reorderStopIds`は引き続き`selectedStops`のみを対象とし、`NamedAnchor`(preserved anchor)は削除・並べ替えの対象にしていない(構造的に非破壊、実機での再テストは未実施)
+
+### 未完了
+
+- 今回の修正はコードレビュー・型検査・ビルド成功で検証したものであり、実機/エミュレータでの動作確認は未実施(この環境に実機・エミュレータが無いため)。特に「温泉追加後もRouteの主要構成が維持されるか」「Photo APIの実fetch数が数カテゴリ閲覧程度で一桁に収まるか」は、ユーザー側での実機再テストが必要
+- 検索品質そのもの(target durationへの収束精度・今ドラ2時間指定での1時間38分といった下振れ・和歌山半日海沿いで徳島/兵庫方面へ候補が伸びる可能性)は、既存のPrefecture Hard Constraint(`isOutsideAreaConstraint`、`supabase/functions/drive-route-planner/plan-builder.ts`)がある前提で調査したが、大規模な検索アルゴリズムの再設計は今回のスコープ外として着手していない。「prefectureが取得できない候補は距離ベースの緩いfallback判定になる」という既知の設計上の残存リスクを確認したが、live testingができない状況で挙動を推測だけで変更するのは避け、次回以降の実機再現待ちとした
+
+### 次にやること
+
+- ユーザーによる実機再テスト(iPhone)。特に「山道+紅葉+温泉追加」「和歌山海沿い半日」「今ドラ120分」の3シナリオと、Photo APIのfetch数ログ確認
+- 実機で問題が再現する場合は、`__DEV__`ログ(`[place-photo-cache]`行、`visibleRequestCount`/`actualNetworkFetches`等)とRoute再生成後のwaypoints構成を持ち帰り、それを起点にさらに調査する
+
+---
+
+## 2026-09-17f (Visual Design統一 第2弾: 残存White Theme一掃・Route Compare刷新・距離時間フォーマット統一)
+
+`feature/100-program-finalization` ブランチで、第1弾のDark Theme導入後の実機フィードバック(残存White Theme画面・内部route名「(tabs)」の露出・距離の生値表示・Route Compareの旧UI感・LoadingState/EmptyStateの未適用)を踏まえ、UI/UXの統一をさらに進めた(commit・pushは未実施)。Route planning・Photo API・AI nextAction等のロジックには一切触れていない。
+
+### 完了したこと
+
+- **「(tabs)」露出の修正**: `app/_layout.tsx`の`<Stack>`へ`screenOptions={{ headerBackButtonDisplayMode: 'minimal', ... }}`を追加し、戻るボタンを常にchevronアイコンのみ(テキストラベル無し)にした。これにより「(tabs)」に限らずあらゆる内部route名がUIへ露出する経路を構造的に防いだ。あわせて`headerTintColor`・`headerStyle`・`headerTitleStyle`・`contentStyle`をdarkトークンで統一し、まだ個別にvisualを作り直していないネイティブヘッダー画面もdark配色になるようにした
+- **残存White Themeの一掃**: `app/departure.tsx`・`app/route-plan.tsx`・`app/spot-discovery.tsx`・`app/route-compare.tsx`・`app/route-summary.tsx`・`app/(tabs)/diary.tsx`・`app/(tabs)/profile.tsx`・`app/(tabs)/trips.tsx`・日記関連画面(`drive-diary-confirm.tsx`・`drive-diary-create.tsx`・`drive-diary-share.tsx`)をdesign tokensへtoken-swapした。JSX構造・state・ハンドラー・API呼び出しは変更していない
+- **距離・時間フォーマットの共通化**: `services/location/format-drive-stats.ts`に`formatDistanceLabel()`を追加(1km未満はメートル表記、100km未満は小数第1位、100km以上は桁区切りの整数)。GPS記録由来の生の浮動小数点値(例: 0.00004822988791711062km)がそのままUIへ出ていた不具合を修正し、Home・Diary・Route比較・Route Proposal・記録関連画面のdistanceKm表示をすべてこの関数経由にした。durationは既存`formatMinutesLabel`(`types/drive.ts`)を同様に徹底適用した
+- **Route Compare全面刷新**: `app/route-compare.tsx`のカードを、名前+distanceKm/durationMinutesの羅列から、theme badge→ルート名→大きな所要時間+小さめ距離→経由地(最大3件+ほか◯件)→ハイライト→残りのタグ、という情報階層を持つcardへ再構成した。選択状態は全面を塗る薄い青背景をやめ、青いborder+右上の小さいチェックバッジで表現。Card幅を画面の約86%にし、隣のCardが少し見えるようにした(選択・決定・横スワイプのロジック自体は変更していない)
+- **Route Proposal Card**: 経由地表示を最大3件+「ほか◯件」に丸め、highlightに`numberOfLines={2}`を追加して情報密度を下げた。distanceKm/durationMinutesの表示も共通フォーマッタ経由にした
+- **LoadingState / EmptyState の実適用**: `app/spot-discovery.tsx`のスポット読み込み中・カテゴリ0件・エラー表示、`app/route-compare.tsx`のルート0件表示を、それぞれ既存の`LoadingState`/`EmptyState`コンポーネントへ置き換えた(内部API名・エラーコードはユーザーへ出さない)
+- **Settings歯車ボタンの調査**: `app/`・`components/`全体を検索したが、gear/settingsアイコンを使うボタンはコード上どこにも存在しないことを確認した(Expo Go/Dev Clientの開発用オーバーレイの可能性が高い)
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`・`npx expo export --platform android` すべて成功(lint warning 0件)
+- `git status`で`supabase/functions/`配下に今回のセッションでの新規変更が無いことを確認し、Search/Route/AI/Photoロジックを変更していないことを確認した
+- 主要な`app/`・`components/`ファイルへの網羅的なgrep(`#[0-9a-fA-F]{3,8}`)で、意図的に残した例外(写真オーバーレイの白文字・影の黒・旧「旅行プラン」legacy画面)以外にhexカラーの直書きが残っていないことを確認した
+
+### 未完了
+
+- 旧「旅行プラン」画面(`trip-create.tsx`・`trip-detail.tsx`・`trip-day-timeline.tsx`・`trip-spot-consult.tsx`・`drive-plan-segment.tsx`)は通常操作から到達不可のlegacyのため、今回もtoken-swap対象外のまま
+- Settings歯車ボタンはコード上に実在しないため対応できず(実機で見えている場合はExpo Go/Dev Client起因の可能性が高い旨を報告)
+- 実機(iPhone)での見た目確認はユーザー側で実施が必要
+
+### 次にやること
+
+- ユーザーによるiPhone実機確認(Home→今ドラ出発地点→今ドラ気分→今ドラRoute Compare→ドライブ計画一覧→ドライブ計画Chat→Route Proposal→Place Candidate→Spot Discovery→Diary→Profile→Bottom Nav→Settings button→Loading/Empty/Error→keyboardの順)
+- 「大きな青い歯車」が実機のどの画面で見えるか、スクリーンショット等での追加確認
+
+---
+
+## 2026-09-17e (Visual Design統一: Dark Theme・Design System導入)
+
+`feature/100-program-finalization` ブランチで、チームメンバー「高沢さん」制作のドライブ記録・共有アプリ(dark theme・iOS native感・card-based)と同じプロダクトファミリーに見えるよう、drive-discovery-app側だけでVisual/UI/UXを統一した(commit・pushは未実施)。Route planningロジック(Spot Pool・prefecture Hard Constraint・coastal Hard Constraint・destinationQuery validation・Search Session Cache・AI nextAction等)・Photo API(useCandidatePhoto・session cache・in-flight dedup)には一切触れていない。
+
+### 完了したこと
+
+- **Design Tokens**: 新規`constants/design-tokens.ts`にColors(dark固定)・Radius・Spacing・Typographyを集約
+- **共通Component**: `PrimaryButton`(destructive variant追加)・`OptionChip`・`SelectionCard`・`WizardProgressHeader`・`QuickReplyChip`をtoken-swap。新規`ScreenHeader`(戻るcircle button+中央title)・`ActionCard`(icon+title+description、Home/今ドラの主要導線用)・`LoadingState`・`EmptyState`を追加
+- **Bottom Navigation**: dark背景・selected state強調へtoken-swap(タブ構成は変更なし)
+- **アプリ全体のdark固定**: `app/_layout.tsx`のReact Navigationテーマを常時`DarkTheme`に、`StatusBar`を`light`に固定(OSのlight/dark自動切替は今回導入しない)。これにより、今回visualを作り直していないネイティブヘッダー画面もdark配色に揃う
+- **Home**: `ActionCard`ベースの構成へ作り直し(今ドラ/ドライブ計画を大きめカードで提示)
+- **今ドラ(`app/conditions.tsx`)・ドライブ計画Chat(`app/drive-plan-chat.tsx`)**: JSX構造・state・ハンドラー・API呼び出しは一切変更せず、StyleSheetの色をすべてdesign tokensへtoken-swap(dark化)。ドライブ計画Chatのヘッダーは新規`ScreenHeader`へ置き換え
+- **Place Candidate Card**: `PlacePhotoHero`・`PlaceInfoOverlay`・`PlaceActionButtons`・`PlaceCandidateCard`をtoken-swap。CTAの並びを「主要指標→ここに寄る(primary)→Google Maps/Web(secondary)」の順に整理(仕様のモックアップに合わせた)
+- **Route Proposal Card**: 距離/所要時間の羅列表示から、大きな所要時間の数字+経由地の縦の矢印リスト+ハイライト(quote風box)というレイアウトへ再構成。実データ(distanceKm/durationMinutes/waypoints/highlight等)は変更せず、既存propsのまま。「ナビする」をprimary CTAへ変更(「このルートで走る」に相当する実際の挙動のため)
+- **Map UI**: `components/map/drive-map-view.tsx`に`provider={Platform.OS==='android'?PROVIDER_GOOGLE:undefined}`を明示し、iOS=Apple Maps・Android=Google Mapsという既存の既定挙動を明文化。Marker/Polyline色をtoken化
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`・`npx expo export --platform android` すべて成功
+- `useCandidatePhoto`の呼び出し箇所・依存配列を変更していないことを確認し、Photo API呼び出し回数に影響が無いことを確認した
+- Google Places/Google Routes/AI nextAction関連のファイルには一切触れていないことをdiffで確認した
+
+### 未完了
+
+- `route-plan.tsx`・`route-compare.tsx`・`spot-discovery.tsx`・diary関連画面・trip関連画面・profile画面の個別画面としてのvisual再構成(Bottom Nav・DarkTheme化・共通Buttonの見た目変更が自動的に反映される範囲を除く)
+- `LoadingState`/`EmptyState`は共通コンポーネントとして用意したが、今回は既存画面の個別ローディング/空状態表示への組み込みは行っていない(次回以降の適用候補)
+- 実機(iPhone)での見た目確認はユーザー側で実施が必要
+
+### 次にやること
+
+- ユーザーによるiPhone実機確認(Home→今ドラ→ドライブ計画Chat→Place Candidate Card→Route Proposal→Map→Bottom Navigation→keyboard→loading/empty/error→Photo cacheの順)
+- 未統一画面への展開の要否を次回相談
+
+---
+
+## 2026-09-17d (重大バグ修正: Planning Area Hard Constraintが和歌山→四国/兵庫県へ逸脱する不具合)
+
+`feature/100-program-finalization` ブランチで、実機テストにより報告された「和歌山県を指定してRoute生成すると四国・兵庫県が目的地になる」重大な不具合を修正した(commit・pushは未実施)。UI・Spot Pool検索ロジック自体・coastal corridorロジック・Photo Card機能には触れていない。
+
+### 完了したこと
+
+- **根本原因の特定**: (1) `destinationQuery`の解決(`app/drive-plan-chat.tsx`)がplanning area Hard Constraintを完全に迂回していた(Text Search 1件目をそのまま`request.destination`にしていた)、(2) `resolvedPlanningArea.label`がcanonicalな都道府県名とは限らず、サーバー側`.includes()`によるあいまい一致判定が機能しない場合があった、(3) `resolveAreaRadiusMeters`が生テキストへの部分一致に依存しており「和歌山方面」が正しい半径(70km)を引けていなかった、という3つの独立したバグを特定した(詳細はdocs/DECISIONS.md)
+- **サーバー側**: `drive-route-planner`の`isOutsideAreaConstraint`を、`areaConstraint.prefecture`(新規、canonicalな都道府県名)がある場合は`candidate.prefecture`との厳密一致を最優先にするよう変更。`selectFinalCandidates`の直後に`filterSelectedByAreaConstraint`(Route完成後の最終Validation)を追加。Spot Pool cache(Upstash)のキーprefixを`pool:`→`pool:v2:`へ繰り上げ、修正前の可能性のある不正キャッシュを即座に無効化
+- **クライアント側**: `services/spot/google-places-client.ts`の`PlaceCandidate`へ`prefecture`を追加。`services/location/prefecture-radius.ts`の`resolveAreaRadiusMeters`がcanonicalな都道府県名を優先して引けるように変更。`app/drive-plan-chat.tsx`にarea解決ヘルパー`resolvePlanningArea`を切り出し、`applyPlanUpdates`内で同一ターン内に即座解決(レースコンディション修正)。`destinationQuery`・`biasAreaQuery`の解決に、確立済みplanning areaへのlocationBiasと、解決結果のprefecture不一致時の採用拒否を追加
+- **AIプロンプト**: `ai-trip-chat`のシステム指示に、地域条件の訂正・強化(「和歌山県内で」「県外に行かないで」等)も`generate_routes`として扱う旨の明示例を追加(スキーマ変更なし)
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios` すべて成功
+- `drive-route-planner`・`ai-trip-chat`をdeployし、実座標(和歌山駅 34.232,135.192)での実APIテストで、(A)おまかせ目的地3時間→紀三井寺・白崎海洋公園展望台・雑賀崎灯台等、すべて和歌山県内の実在スポット、(B)海沿いテーマ4時間→磯釣り・白崎海洋公園展望台・雑賀崎灯台等、すべて和歌山県内の海沿いスポット、いずれも四国・兵庫県への逸脱が無いことを確認した
+- 同一リクエストの再実行で同じ候補が高速(1秒未満)に返ることを確認し、Spot Poolキャッシュが正しく機能していることを確認した
+- 高知駅・高知県・5時間・海沿いの既存回帰テストで、仁淀川河口海岸・桂浜 海のテラス・龍王岬という多様な実在候補が返り、規制していないことを確認した
+
+### 未完了
+
+- 実機(iPhone)でのチャットフロー確認(「和歌山方面で探して」→結果確認→「もう一度和歌山方面で探して」/「和歌山県内で」等の訂正フロー)はユーザー側での実機確認待ち(サーバー側API・Hard Constraint自体はcurlで直接検証済み)
+- dev logのcache hit/miss・rejected count等は、このセッションからは`supabase functions logs`コマンドが利用できず直接確認できなかった(コード自体は`console.log`で出力する実装のまま)
+
+### 次にやること
+
+- ユーザーによる実機確認(上記チャット訂正フロー、および高知以外の県境付近の地域での追加確認)
+
+---
+
+## 2026-09-17c (Place候補カードの「写真+場所らしさ」化: Photo Candidate Card)
+
+`feature/100-program-finalization` ブランチで、「候補が名前だけの一覧で、一目で『ここ良さそう』と判断しづらい」という実機フィードバックを踏まえ、検索ロジック(Spot Pool・Hard Constraint・Search Session Cache・Route生成)には手を入れず、Place候補カードのUIだけを「写真+場所固有の短い説明+ドライブ適合性+Google Maps/Web確認リンク」を持つカードへ作り替えた(commit・pushは未実施)。
+
+### 完了したこと
+
+- **Google Places (New) Photosの実装**: 共有FIELD_MASK(`google-places-provider.ts`)へ`places.photos`を追加し、検索結果から先頭1枚分の写真参照(`photoRef.name`・`authorAttributions`)を取得できるようにした。`photos`フィールドのSKU tierは公式ドキュメントで断定できなかったため、1行で切り戻せる追加にとどめ、検索予算とは独立した`google-places-photo`予算カウンタを新設してコスト影響を分離した(詳細はdocs/DECISIONS.md参照)
+- **Photo Media(実画像)取得の新規エンドポイント**: `google-places` Edge Functionへ`mode:'photo'`を追加し、サーバー側でGoogle Photo Media(`skipHttpRedirect=true`)を叩いて`photoUri`(APIキーを含まない、直接fetch可能なGoogle CDN URL)だけをクライアントへ返すようにした。実機のTokyo Towerでのテストで、返された`photoUri`が追加認証なしで200 image/jpegとして取得できることを確認した
+- **クライアント側の写真キャッシュ**: `services/spot/place-photo-cache.ts`を新設し、セッション内のみのMapキャッシュ(TTL 20分)・進行中フェッチの重複防止・`__DEV__`時のfetch数/cache hit/miss/unavailable件数ログを実装した。表示された候補分だけ、1Place1枚、キャッシュ経由でのみ写真を取得する
+- **場所固有の説明文(AI不使用、決定的テンプレート)**: `services/spot/place-description.ts`を新設し、Google Placesが実際に返したaddressComponents(市区町村・都道府県)とカテゴリだけから「事実」の文を、テーマだけから「ルート適合性」の文を、それぞれ別のテンプレートで機械的に組み立てるようにした。AIへの新規問い合わせは行わず、源泉かけ流し・絶景・SNSで人気等の未確認の主張を一切作らない設計にした
+- **新規再利用コンポーネント**: `PlacePhotoHero`(写真/プレースホルダー+グラデーション+カテゴリバッジ)・`PlaceInfoOverlay`(写真上の名前/カテゴリ/短い説明)・`PlaceActionButtons`(ここに寄る+Google Maps/Web)・`PlaceCandidateCard`(ドライブ計画チャット向けフル版)を`components/ui/`に追加した。写真取得失敗/写真無し/予算切れのいずれでもカードの高さ・情報は変わらず表示される(カテゴリ別の色付きプレースホルダーへフォールバック、生成AI画像は使わない)
+- **Google Maps単体リンク・Web検索リンク**: `services/navigation/google-maps-view.ts`を新設し、APIキー不要のGoogle Maps Universal URL(`query_place_id`でPlace ID精度)と、シンプルなWeb検索URLを組み立てられるようにした
+- **既存画面への適用**: ドライブ計画チャット(`drive-plan-chat.tsx`)のPlace候補カードを`PlaceCandidateCard`(フル版)へ置き換え、今ドラ(`app/spot-discovery.tsx`)の`SpotCard`には`PlacePhotoHero`(コンパクト版)+Google Maps/Webの小さいテキストリンクを追加した(既存の名前・カテゴリバッジ・追加時間・説明・「ここ寄ってみる」ボタンはそのまま維持)
+- **依存関係**: 写真下部の「黒→透明」グラデーションのために`expo-linear-gradient`(Expo公式SDKパッケージ)を追加した
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios` すべて成功
+- `google-places` Edge Functionをdeployし、実APIで(1)Text Searchが`photoRef`・`locality`を正しく返すこと、(2)`mode:'photo'`が実際の`photoUri`を返し、そのURLが追加認証なしで画像として取得できること、(3)不正な`photoName`(URL注入を試みた文字列)が`INVALID_REQUEST`として安全に拒否されること、(4)実在しないが形式は正しい`photoName`が例外を出さず`PLACE_PHOTO_FAILED`として失敗することを確認した
+- 実装直後の実APIテストで、`photoName`の長さ上限(決め打ちの300文字)が実際のGoogleの値(476文字)より小さく、正当なリクエストを誤って拒否するバグを自己発見し、2000文字へ修正・再deployして解消した(docs/DECISIONS.md参照)
+
+### 未完了
+
+- 実機(iPhone)でのドライブ計画チャット・今ドラ双方のPhoto Candidate Card表示確認(写真の見え方、no-photoフォールバック、キャッシュヒットの体感)はユーザー側での実機確認待ち
+- 写真機能追加前後でのGoogle Places検索予算(`google-places`)の消費量比較による、`places.photos`追加の実コスト影響の最終確認は、日次予算の消費状況次第で追加確認が必要
+- 完成済みRoute Proposal本体・「このルートの近く」欄への写真適用は今回のスコープ外(指示どおり)
+
+### 次にやること
+
+- ユーザーによる実機確認(高知+温泉/海沿い候補、今ドラの絶景候補、同一Place再表示時のキャッシュヒット、写真無しPlaceの表示崩れなし)
+- 将来のUI/UX統一ラウンドで、今回のコンポーネント(`PlaceCandidateCard`等)を土台にした横展開を検討
+
+---
+
+## 2026-09-17b (検索品質の抜本改善: Spot Pool設計・Hard Theme全Route適用・planning area Hard Constraint化)
+
+`feature/100-program-finalization` ブランチで、「AIとの相談・チャットUI/UXは良好だが、検索品質・候補選び・ルート提案品質にまだ大きな課題がある」という実機フィードバックを踏まえ、UIを一切作り直さずに検索・候補ランキング・ルート生成エンジンを抜本的に作り直した(commit・pushは未実施)。
+
+### 完了したこと
+
+- **Spot Poolパイプラインの導入**: 「Nearby Searchで近くの場所を少数拾い、その中からRouteを作る」構造から、「areaConstraint.label(実在確認済みの地域名)がある場合、テーマ別に複数のText Searchクエリ(例:「高知県 海岸 観光」「高知県 岬 絶景」「高知県 ビーチ」)を並列実行して広くSpot Poolを作り、そこから食事系除外・planning area整合性チェックを経て候補を選ぶ」構造へ切り替えた(`buildSpotPool`、`plan-builder.ts`)。Nearby Searchは「選ばれたRouteの近くにある場所」用途(既存のNearby Suggestions)に残しつつ、主目的地・主要waypointの選定はこのSpot Pool経由の実在候補(観光地・景勝地・地域代表スポット)を優先するようにした
+- **planning areaのHard Constraint化**: Google Places API (New)のaddressComponentsフィールド(`administrative_area_level_1`)から都道府県名を取得し(`prefecture`)、candidate.prefectureとareaConstraint.labelを直接比較するようにした。**一致すれば必ず許容、prefectureが確実に取得できていて不一致なら原則除外**という、単純な距離ベースの制約より遥かに正確なHard Constraintにした(WebFetchで、Text Search・Nearby Searchいずれもこのfieldの追加が既存の課金tierの範囲内であることを確認済み、追加コストなし)。prefectureが取得できない候補(一部の自然地形等)のみ、代表地点からの距離による軽い判定へフォールバックする
+- **Hard Theme(海沿い)を1案だけでなく全Route Optionへ適用**: 出発地点へ戻るループ・目的地なしの場合、`buildMultiSectorCoastalPlans`が、実在する海沿いPoolの分布から実際に候補が存在する方向を貪欲法で選び(`selectDiverseBearings`)、方向ごとに独立したcoastal corridorを生成するようにした。固定のコンパス方位(0°/120°/240°)ではなく実在候補の分布に基づく方向選定にしたことで、高知県のように海岸線が特定方向(南側)に偏る地域でも、候補が存在しない方角を無駄に探索しない
+- **長時間指定での近場偏重を修正**: anchor距離計算の上限(`resolveLoopRadialMeters`)が45kmで固定されていたため、150分を超える指定(例: 5時間)でもすべて同じ半径にクランプされ、近場の候補を組み合わせて時間を埋める状態になっていた。上限を200kmへ引き上げた(areaConstraintがある場合は引き続きその地域の半径までクランプされるため、県外まで飛ぶわけではない)
+- **温泉検索の改善**: 「温泉」カテゴリの検索を、Nearby Searchだけでなく地域名+「日帰り温泉」「天然温泉 日帰り」「温泉 入浴」のText Search優先にし(サーバー側`buildSpotPool`・クライアント側`drive-plan-chat.tsx`の両方)、villa/一棟貸し/コテージ/旅館等の宿泊専用と思われる施設名を除外するようにした。候補カードには「日帰り利用可否等の利用条件は、公式情報でご確認ください」という注記を追加した
+- **Search Session Cache**: Upstash Redisを使ったfingerprintベースのPoolキャッシュ(`spot-pool-cache.ts`)を追加した。planning area・テーマ・時間帯等から決定的なfingerprintを作り、同一条件のText Search結果を30分間再利用する(座標・自由記述文は一切含まない)。「別の案見せて」的な再生成でも、同じText Searchを繰り返さない
+- **既出候補の除外(`excludePlaceIds`)**: クライアント(`drive-plan-chat.tsx`)がセッション中に一度でも提示した実在Place IDを記憶し(`usedPlaceIdsRef`)、再生成時にサーバーへ送って優先的に避けるようにした(完全ランダム化はしない、ソフトな除外)
+- **安全なdebugログ**: candidate pool size・query count・cache hit/miss・area/food rejection count・multiSectorの最終Route数等を、座標・施設名・Secretを含まない形でログ出力するようにした
+
+### 確認したこと
+
+- **高知駅/高知県/5時間/海沿い/目的地おまかせ**: 3案とも高知県内の実在する海沿いランドマーク(室戸岬・足摺岬・龍王岬・竜串海岸・柏島ビーチ等)を経由し、方向・主要地点・Route shapeが明確に異なり、所要時間はそれぞれ93.2%/114.6%/121.6%(目標5時間に対して極端に短い案は無くなった)。修正前は候補が愛媛県境付近まで飛ぶ・小規模飲食店primaryTypeが混じる等の不具合があったが、prefecture Hard Constraint導入後は解消を確認した
+- 既存の120分target-time回帰テスト(no-bias): 117分/115分/123分(97.6%/95.6%/102.3%)、理想帯を維持
+- 既存の生駒biasPointテスト: 引き続き生駒方向の実在候補を最優先で採用、候補が城跡・神社・寺院等の観光地寄りになっていることを確認
+- Google Places Text Searchのlocation Bias半径の実装時バグ(後述)を発見・修正し、修正後に実在する複数の地域代表スポット(柏島ビーチ等)が正しく取得できることを確認した
+- `npx tsc --noEmit` / `npm run lint` / `npx expo export --platform ios` いずれもエラーなし
+
+### 実装中に発見・修正した重大なバグ
+
+- **Text Search maxResultsの上限超過**: Spot Pool構築時のText Search呼び出しで`maxResults: 6`を指定していたが、google-places側のバリデーション上限は5件までだった。結果、Spot Pool用のText Searchが**毎回`INVALID_REQUEST`で失敗し、実装した新しいSpot Pool機構がテスト中ずっと機能していなかった**。5件へ修正した
+- **locationBias半径の上限誤り**: `MAX_TEXT_BIAS_RADIUS_METERS`を200,000(200km)と設定していたが、WebFetchでGoogle Places API (New) Text Searchの公式ドキュメントを確認したところ、`locationBias.circle.radius`の実際の上限は**50,000(50km)**だった。この誤った上限値のせいで、高知県のような広域のplanning areaを指定するとGoogle側がリクエストを拒否し、Spot Pool検索が全滅していた。50kmへ修正した(それを超えるplanning areaの半径は、locationBias送信時にクランプするだけで、Text Search自体は引き続き地域名を含むクエリ文字列で機能する)
+- **空Poolの誤キャッシュ**: 上記2つのバグにより空結果が返っていたText Search結果を、そのままキャッシュへ保存してしまっていたため、バグ修正後も一定時間(TTL 30分)古い空キャッシュが再利用され続ける状態になっていた。空(全クエリ失敗・該当なし)の結果はキャッシュしないよう修正した
+
+### 未完了
+
+- **Search Session Cacheの「別の案見せて」時のAPI削減効果**: 実装・fingerprint設計は完了しているが、本セッション中に一般トラフィックレート制限(`RATE_LIMITED`)に達してしまい、連続リクエストでの厳密な計測(1回目 vs 2回目の実際のGoogle呼び出し回数比較)を完了できなかった。ロジック上はcache hit時にText Search呼び出し自体をスキップする設計になっていることをコードレビューで確認済み
+- mountain/river corridorへのHard Theme全Route適用は、`buildCoastalCorridorPlan`/`buildMultiSectorCoastalPlans`と同じ枠組みを再利用できる設計にはしたが、今回はcoastalのみ実装・検証した(ユーザー自身の優先順位指定に従った)
+- 今ドラ(`conditions.tsx`)は area概念が無いため、Spot Pool・prefecture Hard Constraintの対象外のまま(既存のanchor+Nearby Search探索を維持)。「今回大規模UI変更は不要」の方針どおり、今ドラ側のUI・入力ステップは変更していない
+- 実機でのUI操作を伴う完全なE2E確認(温泉候補カードの注記表示、Kochi 5時間シナリオの実際のチャット操作等)は、curlベースの検証環境の制約により未実施
+
+### 次にやること
+
+- 一般トラフィックレート制限のクールダウン後、Search Session Cacheのヒット率・API呼び出し削減効果を厳密に再計測する
+- 実機(iPhone)で、高知県・5時間・海沿い・おまかせの一連の操作、および温泉候補カードの注記表示を確認する
+
+---
+
+## 2026-09-17 (実機フィードバック対応: coastal時間収束・planning area分離・optional stop個別ID管理・UI/UXは変更せず)
+
+`feature/100-program-finalization` ブランチで、実機テストの結果「チャットUI/UXは良好」だが裏側のルート生成・スポット順序・状態管理に残っていた不具合を修正した(UI/UXコンポーネントは一切変更していない。commit・pushは未実施)。
+
+### 完了したこと
+
+- **coastal corridorのtarget-time収束**: `buildCoastalCorridorPlan()`を、既存のtarget-time anchor探索と同じ理想帯(85〜110%)判定に従う適応的探索へ変更した。理想帯より短い場合、直前に見つかった海沿い候補の方角(originから見たフロンティア方向)へさらに遠くを探し、既存候補を置き換えるのではなく**積み増す**ことで中間解を逃さないようにした(須磨1件では短すぎるが須磨+もう1件でちょうど良い、のようなケースに対応)。理想帯より長い場合はorigin寄りの1件に絞って再計算する
+- **おまかせgoal候補の実測時間フィルタ**(`app/conditions.tsx`): AIのテーマ一致だけで採用せず、各候補について実測したGoogle Routes所要時間が目標時間に対して近すぎる(比率0.5未満)場合は単独ゴールとして採用しないようにした
+- **観光地優先のカテゴリ整理**: `google-places/place-types.ts`の`scenic`カテゴリに、WebFetchで確認したGoogle公式Table Aの実在type(`tourist_attraction`/`national_park`/`historical_landmark`/`castle`/`monument`/`cultural_landmark`/`shinto_shrine`/`buddhist_temple`/`museum`/`aquarium`/`zoo`)を追加し、観光地・景勝地を優先しやすくした。あわせて、ユーザーが明示的に飲食を求めていない検索では飲食店寄りのprimaryTypeの候補を除外する`isLikelyFoodPlace`判定を追加した
+- **AIのgoal候補生成プロンプト改訂**(`ai-route-planning`): 主ゴール候補が実在店舗名(飲食店等)に偏らないよう、観光地・景勝地・地域を代表するランドマークを優先する指示を追加した
+- **「ドライブする地域」と「出発地点」の分離**(`app/drive-plan-chat.tsx`、ドライブ計画チャット限定・今ドラは対象外): `areaQuery`を実在確認して代表地点+目安半径(`resolvedPlanningArea`)を持つようにし、この情報を実際のルート生成(`areaConstraint`)へ渡すようにした。これまで`areaQuery`は表示用のラベルでしかなく、実際のanchor探索は出発地点(自宅等)を中心に行われていたため、「高知県でドライブ」と言っても無関係な地域にルートが生成される不具合の根本原因だった
+- **origin外confirmationフロー**: planning areaと出発地点が明らかに離れている場合、勝手にルートを作らず「移動も含めるか・現地に着いてから探すか」を確認するようにした。「現地に着いてから探す」を選んだ場合は、自宅座標を使わず実在する現地の代表地点(駅等)を新しい出発地点として使う
+- **候補のarea制約**(`drive-route-planner`): `areaConstraint`(代表地点+半径)を新設し、候補・anchor生成をこの範囲内へ制約するようにした(代表地点からの距離による安全な範囲制約。厳密な行政界polygonは今回導入していない)
+- **optionalスポットの個別ID管理**(`app/drive-plan-chat.tsx`): 候補カードから選んで追加したスポットを、`viaPoints`(名前+座標のみ)から`SelectedStop`(id・Google Place ID・カテゴリ・追加順・表示名・座標)へ置き換えた。AIには座標を渡さず、id・カテゴリ・追加順・実在施設名のみの安全な構造(`stops`)を渡すようにした
+- **AIスキーマへ`removeStopIds`/`reorderStopIds`を追加**: 「最初に追加した温泉を消して」→addedOrder最小のonsenのidだけを`removeStopIds`へ、「温泉は最後にして」→現在のstop id全件を希望順に並べた`reorderStopIds`を返すようにした。カテゴリ単位の全削除ではなく個別idでの削除・並べ替えになる
+- **optionalスポットの順序最適化**(`drive-route-planner`): `orderWaypointsForEfficiency()`を新設し、順序に意味を持たないoptionalViaPoints(候補カードから追加したスポット)を、総移動距離+Uターンpenalty(進行方向が120°を超えて反転する箇所へ加算)が最小になる順へ並べ替えるようにした。追加のGoogle API呼び出しは一切行わない(純粋な幾何計算のみ)。userViaPoints(今ドラの経由地点ステップ等、順序固定の必須経由地点)は一切並べ替えない
+- **状態を失わない設計**: `generate_routes`/`modify_routes`のたびに無条件でoptional stopをリセットしていたのをやめ、originまたはareaQueryが実際に変わった場合のみリセットするようにした。これにより海沿いcorridor+温泉のような複合条件でも、既存の海沿い希望を維持したまま選択済みスポットを組み込めるようになった
+- **優先順位の明文化**: `drive-route-planner`のコード冒頭コメントに、必須地点＞planning area制約＞明示的なcorridor希望＞選択済みoptional stop＞時間目標＞柔らかいテーマ、という優先順位を明記した
+
+### 確認したこと
+
+- coastal corridor(大阪駅・120分・海沿い): 修正前は須磨ヨットハーバー1件のみで90分(75.3%、時間目標を無視)固定だったのが、修正後は須磨+イースターマリーナの2件で147分(122.4%)まで収束するようになった(実在データの制約上、厳密な85〜110%には届かないケースもあるが、時間目標に反応して積極的に調整するようになったことを確認)
+- 既存の120分target-time回帰テスト(no-bias): 117分/115分/123分(97.6%/95.6%/102.3%)、理想帯を維持
+- 既存の生駒biasPointテスト: 引き続き生駒方向の実在候補を最優先で採用。observed候補が城跡・神社等の観光地寄りになったことを確認(scenicカテゴリ拡張の効果)
+- `ai-trip-chat`の「最初に追加した温泉を消して」テスト: AIが正しくaddedOrder最小のonsenのidを`removeStopIds`へ返すことを確認
+- `ai-trip-chat`の「温泉は最後にして」テスト: AIが正しく現在のstop id全件を希望順に並べた`reorderStopIds`を返すことを確認
+- `ai-trip-chat`の7ターン会話・nextAction遷移(search_places→generate_routes→save)の既存回帰テストが、`stops`フィールド追加後も引き続き成功することを確認
+- `ai-route-planning`のおまかせgoal候補が、修正前後とも観光地寄りの語句(夜景スポット/高原の展望台/市街地を望む公園等)を返すことを確認
+- `npx tsc --noEmit` / `npm run lint` / `npx expo export --platform ios` いずれもエラーなし
+
+### 未完了
+
+- **Google Places/Google Routes日次予算の枯渇により、本ラウンド後半のplanning area制約(高知県5時間diversityテスト)・optionalViaPoints順序最適化のライブ確認が完了できなかった**。本ラウンドの大量デバッグ用リクエスト(coastal corridorの複数回の調整・再デプロイ・確認)で1日あたりの外部API予算(`checkExternalApiBudget`、既定300件/日等)を使い切ったため、`drive-route-planner`が`budget_exceeded`で候補を返せない状態になった(fail-closedで正しく動作しており、コード側のバグではないことをprefilter・base route双方の切り分けテストで確認済み)。日次予算がリセットされ次第、Test C(planning area外confirmation)・Test D(高知県内diversity・県外へ飛ばないこと)・Uターンpenaltyの実route確認を再実施する必要がある
+- optionalViaPoints順序最適化(`orderWaypointsForEfficiency`)は、tscでの型検証・ロジックレビューのみ完了しており、実route(Polyline)での最終確認は上記の予算枯渇により未実施
+- 実機でのUI操作を伴う完全なE2E確認(area外confirmationのquick reply操作・候補カード選択→ルート再生成→過去提案のcompact化、等)は未実施(curlベースの検証環境の制約)
+
+### 次にやること
+
+- 日次予算リセット後、Test C/D・Uターンpenalty確認を再実施する
+- 実機(iPhone)で、高知県・大阪起点・海沿い・温泉追加・削除・並べ替えの一連の操作を確認する
+
+---
+
+## 2026-09-16 (追加作業: 「AIが完成させる」から「AIと一緒に組み立てる」への転換・海沿いcorridor・Route Proposalの完全な時系列化)
+
+`feature/100-program-finalization` ブランチで、「条件を入力するとすぐルートを自動生成するだけ」という実機フィードバックを踏まえ、今ドラ・ドライブ計画の両方を「AIと候補を見ながら一緒にドライブを組み立てる」体験へ改善した(commit・pushは未実施)。
+
+### 完了したこと
+
+- **今ドラ「おまかせ」最終地点の複数候補化**: `ai-route-planning`が性格の異なる最大3件の検索意図(例:「夜景スポット」「高原の展望台」「夜カフェ」)を返すようにし(`suggestedGoalQuery`/`Alt1`/`Alt2`)、クライアント(`app/conditions.tsx`)が実在確認できた候補ごとに個別に`requestDrivePlans`を呼び、体験の異なる複数ゴールを**既存のルート比較画面(3案比較UI)**でそのまま選べるようにした(新しい選択専用画面は追加していない)
+- **「海沿い」をルート全体のcorridorとして扱う**(今ドラ・ドライブ計画共通の`drive-route-planner`): これまで最終地点だけが海側になる挙動だったのを、`buildCoastalCorridorPlan()`を新設し、基本ルートのPolyline沿いに複数anchorを置いて実在する海沿いスポット(`beach`/`marina`/`fishing_pier`、WebFetchでGoogle公式Table Aを確認済みの実在type)を検索し、最大2件を経由地点としてGoogle Routesへ渡すことで、ルート形状自体を海側へ寄せるようにした。実在する海沿いスポットが見つからない場合は架空の候補で埋めず、従来のanchor探索結果をそのまま使う
+- **origin重複waypointバグの修正**: 「高知駅から出発→高知駅に寄る」という不自然な候補が実機で報告されたため、`MIN_DISTANCE_FROM_MANDATORY_METERS`を150m→800mへ拡大した
+- **ドライブ計画チャットのAI意思決定を`nextAction`ベースへ全面刷新**: `shouldGenerateRoutes`/`shouldSave`の2つのbooleanを廃止し、`nextAction`(ask/search_places/generate_routes/modify_routes/save/chat)という1つの決定フィールドへ統合した。「温泉追加して」のような**カテゴリの実在候補を求めているだけ**のメッセージでは`search_places`を選ばせ、即座にルートを完成させず、まずGoogle Placesの実在候補をカードで提示するようにした
+- **実在スポット候補のchat item化**: AIが`search_places`を選んだ場合、クライアントが実際にGoogle Placesへ問い合わせ、候補(名前・カテゴリ・既存のdetour見積もり手法(services/spot/google-places-spot-provider.tsと同じHaversine概算)による目安追加時間)をカード形式のchat itemとして表示する。ユーザーが「ここに寄る」を直接タップした候補**だけ**をwaypointへ追加してルートを再生成する(AIは実在の場所名を一切見ない・創作しない、候補選択はAIとの往復無しに直接クライアントで処理する)
+- **Route Proposalを本当にチャット履歴へ統合**: `app/drive-plan-chat.tsx`の内部データモデルを、メッセージ配列とルート提案配列が別々だった構造から、`ChatItem`(message/proposal/placeCandidates/error)の単一時系列配列(`items`)へ全面再設計した。新しいメッセージ・ルート提案・実在候補・エラーはすべて同じ`FlatList`の要素として時系列に追加され、最新のRoute Proposalだけが地図付きで展開表示され、それ以前は自動でcompact表示になる
+- **スクロール挙動の改善**: チャット一覧が下端付近にある場合だけ新しいitem追加時に自動scrollするようにし(`isNearBottomRef`)、ユーザーが過去のやり取りを読んでいる時に強制的に最下部へ飛ばさないようにした
+- **エラー表示のchat item化**: 独立した固定位置のエラーカードをやめ、エラーもchat itemの1種として時系列に表示するようにした(再試行ボタンは引き続き機能する)
+
+### 確認したこと
+
+- `npx tsc --noEmit` / `npm run lint` / `npx expo export --platform ios`: すべてエラーなしで完了
+- `drive-route-planner`をdeployし、大阪駅発120分ループ(海沿い希望あり)で、実在するマリーナ(神戸市立須磨ヨットハーバー、primaryType: marina)を経由地点としたルートが返ることを確認。海沿い希望なしの場合の120分収束(97.5%/101.7%/95.8%)・生駒biasPointの効果(前回確認済み)がいずれも維持されていることも再確認した
+- `ai-route-planning`をdeployし、「おまかせ」最終地点で3つの体験の異なる検索意図(夜景スポット/高原の展望台/夜カフェ)が返ることを確認
+- `ai-trip-chat`をdeployし、「温泉に寄りたいです」→`nextAction: search_places`(即座にルート完成させない)、「海沿い多めにして」→`generate_routes`、「保存したいです」→`save`、と会話の意図に応じて正しく使い分けられることを実際の3ターン会話で確認。既存の7ターン連続会話の無エラー回帰テストも引き続きHTTP 200で通ることを確認した
+
+### 未完了
+
+- 実機(iPhone)での再テストは未実施
+- おまかせ最終地点の複数候補・海沿いcorridor・実在スポット候補カードのUIは、実機での見た目・操作感の確認が未検証
+- 実在スポット候補カードの「+◯分」表示は、既存のSpot Discoveryと同じ直線距離ベースの見積もりであり、選択後のGoogle Routes実測値とは異なりうる(選択して初めて正確な値になる、という既存の設計方針を踏襲)
+
+### 次にやること
+
+- 実機再テスト
+
+---
+
+## 2026-09-16 (追加作業: ルート提案のdiversity engine根本改善・地理的希望の反映・「おまかせ」最終地点)
+
+`feature/100-program-finalization` ブランチで、実機テストで見つかった「ルート提案そのものが毎回似る」「条件を変えてもルートが変わらない(例:「生駒を走りたい」を追加しても無視される)」という根本問題を修正した。今ドラ・ドライブ計画共通のルート生成エンジン(`drive-route-planner/plan-builder.ts`)を改善し、AIスキーマに強い地理的希望を伝える経路を新設した(commit・pushは未実施)。
+
+### 完了したこと
+
+- **根本原因の特定**: `drive-route-planner`のanchor生成(`LOOP_ANCHOR_BEARINGS`等)は常に固定のコンパス方位のみを使い、どの嗜好パラメータにも一切連動していなかった。かつ今ドラのAI解釈結果(`AiRoutePreferences`)には地名を表すフィールドが存在せず、「生駒を走りたい」という自由記述はAIの出力スキーマ上どこにも反映できない構造だった。これが「条件を変えてもルートが変わらない」の直接の原因
+- **biasPointの新設**(`drive-route-planner`): `DrivePlanRequest.biasPoint`(実在確認済みの座標)を追加。指定されるとanchor生成(`generateLoopAnchors`/`generateDestinationAnchors`/`exploreAddedMinutesCandidates`のcorridor anchor)がその地点を最優先anchor(index 0)として必ず含み、残りのanchorもその方角へ偏らせる。`selectFinalCandidates`/`selectDiverseAddedMinutesCandidates`に`priorityAnchorIndex`を追加し、biasPoint由来の候補はscoreの順位に関わらず必ず1件目に採用する
+- **AI解釈への地理的希望の追加**: `ai-route-planning`の`AiRoutePreferences`に`requestedAreaQuery`(例:「生駒山」、検索意図の文字列のみ、AIは座標を創作しない)を追加。System instructionsで「生駒を走りたい」等の地名言及をこのフィールドへ抽出するよう指示。クライアント(`app/conditions.tsx`)が`searchPlaceByText`で実在確認してから`biasPoint`として`drive-route-planner`へ渡す。`ai-trip-chat`側にも同じ仕組み(`planUpdates.biasAreaQuery`)を追加し、ドライブ計画チャットでも同じdiversity engineを使えるようにした
+- **類似ルート検出(軽量、Polyline上のサンプル点の近接割合のみ)**: `isSimilarRoute()`を新設し、2つのGoogle Routes実測ルートのPolylineから12点サンプリングして70%以上近接していれば「同じルート」と判定する。`selectFinalCandidates`/`selectDiverseAddedMinutesCandidates`を、似た候補を新しい別ルートにせず`nearbySuggestions`(「このルートの近く」)へ振り分けるよう変更(Route diversityとOptional spot diversityの分離)。「3件返すことを優先しない」方針に変更し、本当に別と言える候補が無ければ2件のまま返す
+- **候補探索の予算を拡大**(合理的な範囲、既存のbudget check・rate limitは無変更): `MAX_CANDIDATES_TO_EVALUATE`を4→5、`ROUND_ANCHOR_COUNTS`を`[3,2]`→`[4,2]`に変更(最大2ラウンドでPlaces最大6回・Routes評価最大10回程度)
+- **今ドラ「おまかせ」最終地点**: `returnTarget`に`'ai-suggested'`を追加。AIが`suggestedGoalQuery`(例:「夜景スポット」、実在する具体的施設名は創作しない)を提案し、クライアントがGoogle Places Text Search(出発地点周辺への`locationBias`付き)で実在確認してから目的地として採用する。解決できなければ安全に通常のループへフォールバックする
+- **Google Places Text SearchへのlocationBias追加**: 「夜景スポット」のような一般語句が出発地点から無関係な場所にマッチしないよう、`google-places`のText Searchモードに任意の`locationBias`(中心+半径)を追加した(Nearby Searchの挙動には影響しない)
+- **Nearby Suggestions UI**: `RouteProposalCard`に「このルートの近く」セクションを追加し、`+X分`の表示と「追加して再計算」ボタンから、実際にその地点を経由地として加えて`drive-route-planner`を再呼び出しできるようにした
+- **チャットのRoute Proposal履歴化**: `drive-plan-chat.tsx`の状態を`routeOptions`/`selectedRouteId`の単一state から`proposals: DrivePlanProposal[]`(履歴配列)へ再設計。新しい提案は常に配列末尾に追加され(既存を上書きしない)、最新の提案だけがMap付きで展開表示され、過去の提案は「前の提案(全Nコース)」+「もう一度見る」のcompact表示になる(過去の提案ではMapを一切mountしない)
+- **safe debug log**: `drive-route-planner`に候補数・採用anchor数・biasPoint使用有無を出す`logDiversityOutcome()`を追加(座標・場所名は含めない)
+
+### 確認したこと
+
+- `npx tsc --noEmit` / `npm run lint` / `npx expo export --platform ios`: すべてエラーなしで完了
+- `drive-route-planner`を実際にdeployし、大阪駅発120分ループでbiasPoint無し/生駒山biasPointありの2パターンを比較: bias無しではsuggestedPlaceが東西南北ばらばら(豊田池34.539,135.835等)、biasありでは1件目が生駒山からわずか約1kmの実在地点(生フォトット、34.679,135.679)になることを確認。biasPoint無しの120分収束(97.5%/101.7%/95.8%)も維持されていることを確認(回帰無し)
+- `ai-route-planning`を実際にdeployし、「生駒を走りたいです」でrequestedAreaQuery:"生駒"が正しく抽出されることを確認。地理的希望の無い通常リクエスト(「海沿いの気持ちいい道を走りたい」)ではrequestedAreaQuery/suggestedGoalQueryが両方とも正しく空文字列になることも確認(回帰無し)
+- 「おまかせ」最終地点を実際にdeployして確認: wantsAiSuggestedDestination:trueで「夜景スポット」が提案され、大阪駅周辺へのlocationBias付きText Searchで実在する展望台(日の丸展望台)に解決されることを確認
+- `ai-trip-chat`を実際にdeployし、既存の複数ターン会話テストが引き続きHTTP 200で通ることを確認。「桂浜の方に行きたいです」でbiasAreaQuery:"桂浜"が抽出されることも確認
+
+### 未完了
+
+- 実機(iPhone)での再テストは未実施(次回、下記の再テスト手順を参照)
+- Nearby Suggestionsの「追加して再計算」ボタンは実機での動作確認が未検証
+- Route Proposal履歴化のUI(前の提案のcompact表示)は実機での見た目確認が未検証
+
+### 次にやること
+
+- 実機再テスト(下記21章の手順を参照)
+
+---
+
+## 2026-09-16 (追加作業: ドライブ計画チャットの実機不具合修正・状態管理の堅牢化・UI改善)
+
+`feature/100-program-finalization` ブランチで、直前(同日)にシンプル化した「ドライブ計画をほぼ1画面のチャットへ」のiPhone実機テストで見つかった不具合(ユーザーメッセージの重複、数ターン後にAIへ相談できなくなる、クイック返信のUIがキーボード開閉で崩れる等)を修正した。新機能追加より安定化を優先する指示に従い、機能追加は行っていない(commit・pushは未実施)。
+
+### 完了したこと
+
+- **最重要のバグ修正**: `ai-trip-chat`が数ターン後に必ず失敗する不具合の根本原因を特定・修正した。`openai-provider.ts`の`buildInputMessages()`が会話履歴のassistant発言にも一律で`type: "input_text"`を使っていたが、OpenAI Responses APIはassistant役割のcontentに`"output_text"`を要求するため、2ターン目以降(履歴にassistant発言が含まれた時点)で毎回OpenAI側から400が返っていた。ログ基盤(Supabase CLIに`functions logs`が無い)が使えなかったため、一時的なデバッグ手段でOpenAIの生エラーメッセージを直接確認してから確定的に修正した。修正後、7ターンの実会話テストで全ターンHTTP 200を確認
+- 安全ログの強化: `ai-trip-chat`にrequestId(相関ID)・turnCount・HTTPステータス・エラーカテゴリ(timeout/rate_limited/json解析失敗/schema検証失敗等)を`logSafe()`経由で記録するようにした(会話内容・座標は一切含めない)
+- 安全マージンの拡大: `MAX_ASSISTANT_MESSAGE_LENGTH`(500→700)・`OPENAI_MAX_OUTPUT_TOKENS`(600→800)を引き上げ、OpenAI Structured Outputsのstrict modeが文字列長をハード制約しないことによる実行時再検証落ち・出力トークン超過を起こりにくくした
+- 会話のテンポ改善: System instructionsに「1メッセージで複数情報が伝えられた場合は一度に抽出する」「assistantMessageは2〜3文・120文字程度に簡潔にする」という指示を追加した
+- **状態管理の堅牢化**(`app/drive-plan-chat.tsx`): 手動送信・クイック返信・再試行の3経路を`performChatRequest()`に集約し、`useRef`による同期ロック(`sendLockRef`)で「1ユーザー操作につきリクエストは必ず1つだけ」を構造的に保証した。`requestSeqRef`による最新リクエストのみ反映する防御チェックも追加。エラー時は赤文字ではなくinline error card(「うまく接続できませんでした」+「もう一度試す」)にし、再試行は`lastSentMessagesRef`に保持した直前の送信内容だけを再送する(ユーザーメッセージを二重追加しない)
+- **クイック返信のpill化**: `components/ui/quick-reply-chip.tsx`に固定`height`(34)・`alignSelf:'flex-start'`・`flexGrow/flexShrink: 0`を設定し、コンテナ側の`ScrollView`にも固定`height`(46)を設定して、キーボード開閉でチップが縦に伸びる不具合を修正した
+- **キーボード操作性**: メッセージ一覧`FlatList`・クイック返信`ScrollView`の両方に`keyboardShouldPersistTaps="handled"`を追加し、キーボード表示中でもチップ・ボタンが1タップで反応するようにした(`Keyboard.dismiss()`は元々どこからも呼んでいないため、タップでキーボードが閉じることもない)
+- **入力欄のplaceholder動的化**: AIスキーマは変更せず、クライアント側の既知の状態(areaQuery/hasOrigin/themes/routeOptions)だけから「行きたい地域を入力」→「出発地点を入力」→「景色・食事・温泉など希望を入力」→「AIに希望を伝える」の4段階でplaceholderを切り替える軽量ヒューリスティックを追加した
+- **レイアウト調整**: ヘッダーの上下余白・メッセージバブルの間隔を詰めた
+- **ルート提案カードの再設計**(`components/ui/route-proposal-card.tsx`、新規): Figma参考の「カード単位でまとまった情報設計」を、実データのみ(距離・所要時間・実在suggestedPlace・実際に選んだテーマ・drive-plan-mapper.ts由来の説明文)で構成した。星評価・口コミ件数・架空の写真・架空の「追加時間」は表示しない。保存ボタンに加え、既存の`services/navigation/google-maps-navigation.ts`を使った「ナビする」ボタンを追加した
+- 保存済みプランカード(`app/(tabs)/trips.tsx`)に主なスポット名・「続きをAIと相談する」の導線ヒントを追加
+
+### 確認したこと
+
+- `npx tsc --noEmit` / `npm run lint` / `npx expo export --platform ios`: すべてエラーなしで完了
+- `ai-trip-chat`をdeployし、7ターンの実会話(「高知県でドライブしたいです」→…→「保存したいです」)をNode script経由で連続送信し、全ターンHTTP 200・想定通りのplanUpdates(1メッセージで複数テーマ+時間を同時抽出できていることも確認)を確認
+- 修正前は同じテストが必ずturn 2でHTTP 502(OpenAI側400)になることを再現し、修正後に再現しなくなったことを確認(deterministicな不具合だったため、再現性の確認自体が有力な検証となった)
+- headerの「Settingsボタン」について: 現在のコードベース(`app/drive-plan-chat.tsx`および関連画面)には該当するボタンが見当たらなかった。ヘッダーは「← 戻る」テキストリンクとタイトルのみで、過大なコンポーネントは無い。別画面を指している可能性があるため、次回確認が必要
+
+### 未完了
+
+- 実機(iPhone)での再テストは未実施(次回、下記の手順で確認予定)
+- Route Proposal Cardの「ナビする」ボタンは実機での動作確認(Google Mapsアプリ起動)が未検証
+
+### 次にやること
+
+- 実機再テスト(下記の再テスト手順を参照)
+- 「Settingsボタン」について、該当箇所のスクリーンショット等で認識合わせ
+
+---
+
+## 2026-09-16 (追加作業: ドライブ計画をほぼ1画面のチャットへ大幅シンプル化)
+
+`feature/100-program-finalization` ブランチで、直前(同日)の「今ドラ」/「ドライブ計画」再設計後も実機で使った結果まだ複雑と判断され、「旅行計画アプリを作らない」を最優先方針に、ドライブ計画を「今ドラの、未来・旅先版」としてほぼ1つのチャット画面へ大幅に作り直した(commit・pushは未実施)。着手前にEnterPlanModeで計画を提示しユーザー承認を得てから実装した。
+
+### 完了したこと
+
+- **A. `drive-route-planner`の候補多様性改善**: `plan-builder.ts`に、候補がどの検索anchorから来たかを追跡する`anchorIndex`を追加し、評価予算へ絞り込む前に`interleaveByAnchor()`でラウンドロビン化。最終選抜も2パス化(まだ選ばれていないanchor由来の最良候補を優先→残りはscore順)し、`selectFinalCandidates`・`exploreAddedMinutesCandidates`/`selectDiverseAddedMinutesCandidates`の両方に適用。スコアリング・時間収束ロジック自体は無変更。deploy後、Osaka駅発120分ループで117.15/121.9/114.2分と収束が維持されていることを確認、多様性も改善(地理条件により完全な3-way多様化に至らないケースがあることは確認済みで許容範囲と判断、docs/DECISIONS.md参照)
+- **B. Google Places Text Search追加**: 既存`google-places` Edge Functionへ`mode: 'text'`を追加(新規Function無し)。`place-types.ts`に`TextPlaceSearchRequest`/`validateTextPlaceSearchRequest`、`google-places-provider.ts`に`searchTextPlaces`/`buildTextRequestBody`、`index.ts`にmode分岐、`services/spot/google-places-client.ts`に`searchPlaceByText`を追加。deploy後、「高知駅」のText Search・カフェのNearby Search回帰確認をともにHTTP 200で確認
+- **C. `SavedDrivePlan`型・ストア新設**: `types/drive-plan.ts`(`SavedDrivePlan`、`Trip`/`TripDay`には合わせない薄い構造)、`services/drive-plan/drive-plan-store.ts`(`trip-store.ts`と同じ安全なAsyncStorageパターン、`drive-discovery.driveplans.v1`キー)を新規作成
+- **D. `ai-trip-chat`をv3(Drive Planning Assistant)へ全面刷新**: `chat-types.ts`/`openai-provider.ts`/`index.ts`/`services/ai/trip-chat-client.ts`を全面書き換え。`assistantMessage`+`suggestedQuickReplies`+`planUpdates`(検索意図の文字列のみ、実座標なし)+`shouldGenerateRoutes`+`shouldSave`の5フィールド設計にし、v1/v2のDay/searchIntents概念を撤去。deploy後、実リクエスト(「高知県で気持ちよく走れるドライブコースを探したい」)でHTTP 200・想定どおりの1問だけの追質問・`planUpdates`を確認
+- **E. 新しい1画面チャットUX**: `app/drive-plan-chat.tsx`を新規作成。`FlatList`ベースのメッセージ一覧、`KeyboardAvoidingView`+SafeArea対応の入力欄、ワンタップ送信の`components/ui/quick-reply-chip.tsx`、ルート候補が出たらチャット内にインラインで`DriveMapView`+コース切替チップ+簡易しおり+保存ボタンを表示。`savedPlanId`パラメータで保存済みプランを同じ画面に復元して相談を再開できる
+- **F. ドライブ計画タブの再構成**: `app/(tabs)/trips.tsx`を「新しくAIと相談する」ボタン+保存済み`SavedDrivePlan`のカード一覧へ全面書き換え。カードは地図を持たず(`route-plan.tsx`で確認済みの既知クラッシュ回避方針を継続)、新規`components/ui/route-preview-strip.tsx`(View/StyleSheetのみのドット+接続線)でルートの形を視覚化。`app/(tabs)/index.tsx`のホーム画面プレビューも`Trip`/`getTrips()`から`SavedDrivePlan`/`getDrivePlans()`へ切り替えた
+- **G. 旧UIのlegacy化**: `app/trip-create.tsx`・`app/trip-detail.tsx`・`app/trip-day-timeline.tsx`・`app/trip-day-detail.tsx`・`app/trip-spot-consult.tsx`・`app/drive-plan-segment.tsx`・`services/trip/trip-store.ts`・`types/trip.ts`はコードを削除せず維持し、メイン導線(Bottom Tab・ホーム)からの参照のみ外した。例外として`app/trip-chat.tsx`(v2)は新スキーマとの非互換により動作不能になるため削除し、`app/_layout.tsx`のStack.Screen登録・`app/trip-detail.tsx`からの遷移先を新しい`drive-plan-chat.tsx`へ差し替えた
+- ESLintのReact Compilerルール(`react-hooks/immutability`/`react-hooks/purity`)対応: `drive-plan-chat.tsx`で関数の前方参照(`restoreFromSavedPlan`・`persistPlan`)を宣言順に並び替え、`Date.now()`呼び出しをJSXのonPressに最も近い箇所で計算しparameter経由で下位関数へ渡す形に統一した
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラー・警告なし
+- `npx expo export --platform ios`: 成功(1635 modules、iOS bundle出力を確認)
+- Expo Router typed routesが`drive-plan-chat`を認識していることを`.expo/types/router.d.ts`で確認
+- `google-places`(Text Search追加分)・`ai-trip-chat`(v3)をdeployし、実リクエストでレスポンス形・HTTPステータスを確認(詳細は上記A/B/D)
+- `drive-route-planner`はSection A実装時に1度deploy済みで、以降この画面(E〜G)の実装ではサーバー側コードを変更していないため再deployは行っていない
+
+### 未完了
+
+- 実機(iPhone Expo Go)での一連の動作確認(ドライブ計画のチャット→ルート提案→保存→カード一覧→再編集のフルフロー)は未実施
+- README.md / CHANGELOG.md の更新はこのエントリと同時に実施予定(本エントリ記録時点で進行中)
+
+### 次にやること
+
+- 実機でのフルフロー確認(特にキーボード・スクロール・二重送信防止・地図contentKey切替)
+- ユーザーへの最終報告(20項目)
+
+---
+
+## 2026-09-16 (追加作業: 「今ドラ」/「ドライブ計画」再設計)
+
+`feature/100-program-finalization` ブランチで、同日の実機フィードバックを踏まえ、アプリの使い方を「今ドラ(今から走る)」/「ドライブ計画(今度走る)」の2つに整理した(commit・pushは未実施、既存の未commit変更はすべて維持)。大きな変更のため、着手前にEnterPlanModeで計画を提示しユーザー承認を得てから実装した。
+
+### 完了したこと
+
+- **今ドラ側は無改造で維持**(`app/conditions.tsx`・`app/route-compare.tsx`・`app/spot-discovery.tsx`・`app/route-plan.tsx`・`drive-route-planner`の時間指定ありパス等)。季節コンテキスト(下記)の追加のみ
+- 型拡張(`types/trip.ts`、`types/spot.ts`): `TripSavedPlace`(気になる場所)・`TripDriveSegment`/`TripDriveSegmentCandidate`(区間探索の保存)・`Trip.areaName`/`departurePlace`/`destinationPlace`を追加。`SpotCategory`に`'歴史'`/`'市場'`を追加(`SPOT_BROWSE_FILTERS`は5種のまま変更せず、今すぐドライブのSpot Discoveryチップは無変更)。すべて追加のみで`TRIP_SCHEMA_VERSION`は据え置き
+- `services/trip/trip-store.ts`に`addDraftDays`/`setDeparturePlace`/`setDestinationPlace`/`addSavedPlace`/`removeSavedPlace`/`addDriveSegment`を追加。`buildTripFromDateRange`は「最初からDay1/2/3を大量に作らない」方針にあわせ、`days: []`(未分割)で作成するよう変更した(日程分けは`addDraftDays`で後から任意に行う)
+- Google Placesカテゴリを5→7種へ拡張(`supabase/functions/google-places/place-types.ts`、`services/spot/google-places-client.ts`、`services/spot/google-places-spot-provider.ts`)。「歴史」「市場」の実在するGoogle Place Types (New) の値はWebFetchで公式ドキュメントを確認して採用した(`historical_landmark`/`historical_place`/`castle`/`shinto_shrine`/`buddhist_temple`/`museum`/`cultural_landmark`/`monument`、`market`/`farmers_market`/`flea_market`)。FIELD_MASK・コスト構造は無変更。`drive-route-planner/plan-types.ts`のローカル複製`DESIRED_STOP_OPTIONS`も同じ2値を追加(`ai-route-planning`側は5値のまま、今ドラの挙動に影響しない)
+- `ai-trip-chat`をv2スキーマへ全面刷新(`chat-types.ts`/`openai-provider.ts`/`index.ts`)。`proposedDays`(Day単位の提案)を廃止し、`assistantMessage`+`searchIntents`(カテゴリ・エリアの手がかりのみ、実座標・実名称なし)+任意の`daySuggestion`(ユーザーが明示的に尋ねた場合だけの大まかな日数目安)へ変更。System instructionsを「旅行日程を完成させるAI」から「知らない土地の相談相手」へ書き換え、実在未確認の場所を断定しないことを明記した
+- 「この日についてAIに相談する」の日単位チャット導線(`trip-day-timeline.tsx`)を撤去し、「AIへの相談はドライブ計画のホームから」への案内リンクに置き換えた。実機で報告された「どの日から相談してもDayIndex 2固定になる」不具合は、静的解析の結果、AIレスポンスのJSON Schemaがscope.dayIndexへの制約を持たない設計だったことが濃厚な原因と判断し、day概念自体をレスポンスから撤去することで解消した(個別パッチではなく設計変更で対応)
+- 季節コンテキスト(`services/date/season.ts`、日付から機械的に算出、外部API不使用)を追加し、今ドラ(`ai-route-planning`、`seasonHint`をoptional追加)・ドライブ計画(`ai-trip-chat`)の両方のAI相談へ渡すようにした。開花・積雪等の実況を断定しない指示をSystem instructionsに追加
+- 新規/改修画面: `app/trip-create.tsx`(地域名を追加)、`app/trip-detail.tsx`(ドライブ計画ホームへ全面再設計: 出発地点/目的地の地図設定・気になる場所一覧・AI相談・区間探索・任意の日程分割)、`app/trip-chat.tsx`(v2スキーマ対応、Day概念を撤去)、`app/trip-spot-consult.tsx`(dayId任意化、dayId無しの場合は気になる場所へ保存)、`app/drive-plan-segment.tsx`(新規、A→B区間探索)。`app/trip-day-timeline.tsx`・`app/trip-day-detail.tsx`は既存のまま維持(日程を作った場合の従来導線として到達可能)
+- A→B区間探索は、前回実装した`drive-route-planner`の「時間指定なし+目的地あり」パス(基本ルート+corridor anchorのaddedMinutes候補)をそのまま再利用し、新規サーバーロジックは追加していない。「+30分まで/+1時間まで/気にしない」の上限は、返ってきた候補のaddedMinutesをクライアント側でフィルタするだけで実現した
+- Bottom Tab・ホーム・一覧画面の文言を「今ドラ」「ドライブ計画」へ軽く変更(タブ構成・アイコン・ナビゲーション構造は無変更)
+
+### 確認したこと
+
+- `npx tsc --noEmit`・`npm run lint`・`npx expo export --platform ios`: いずれもエラーなし(型の二重定義(`PlaceSearchCategory`が`spot-provider.ts`と`google-places-client.ts`に別々に存在)に起因する型エラーを発見・修正した)
+- 変更したEdge Function(`google-places`・`drive-route-planner`・`ai-route-planning`・`ai-trip-chat`)をdeployし、全関数のOPTIONS応答(204)を確認
+- `ai-trip-chat`は実際にリクエストを送信し(`context`にareaName/seasonHint/plannedStartDate等を含む実データ)、v2スキーマのレスポンス(`assistantMessage`+`searchIntents`)が正しく返ることを確認した。返信文中で「紅葉状況や道路状況は直前に確認してください」のように季節情報が弱い表現で扱われ、`searchIntents`が具体的な場所名を創作せずカテゴリ+エリアの手がかりのみを返すことを確認した
+- `ai-route-planning`(今ドラ)に`seasonHint`を渡すリクエストを送信し、既存のレスポンス形状のまま正常に動作すること(季節が解釈結果へ自然に反映されつつ、既存フィールドは変更されていないこと)を確認した
+- `drive-route-planner`のカテゴリ拡張(`plan-types.ts`)は今回`plan-builder.ts`のロジック自体を変更していないため、実際のGoogle Routes呼び出しを伴うライブテストは行っていない(コスト抑制のため見送り、型検証・deploy成功のみで確認)
+
+### 未完了
+
+- iPhone実機での通し確認(下記「次にやること」参照)はユーザー側で実施予定
+- ドライブ計画の「気になる場所」の手動地図追加(AI検索を経ない直接追加)は今回未実装(AI検索意図経由のみ)
+- `trip-spot-consult.tsx`・`drive-plan-segment.tsx`は既知のiOS Expo Go + DriveMapViewクラッシュ回避のため地図非表示のまま
+- AI相談の会話履歴は画面を開いている間だけの一時状態(永続化なし)
+
+### 次にやること
+
+- iPhone実機で、今ドラ側が無改造で今まで通り動作すること→ドライブ計画の作成(地域名込み)→AIに相談(検索意図の表示・実在候補の確認・気になる場所への保存)→区間のドライブを探す(2地点選択・候補比較・保存)→任意で日程に分けてみる、の順に確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+
+---
+
+## 2026-09-16 (100 Program完成版 UX改善: マーカー操作・時間指定なし・目的地任意化・長距離候補・旅行プランAI相談型しおり)
+
+`feature/100-program-finalization` ブランチで、iPhone実機テストの結果を踏まえたUX改善(A〜N)を実装した(commit・pushは未実施、既存の未commit変更はすべて維持)。大きな変更のため、着手前にEnterPlanModeで計画を提示しユーザー承認を得てから実装した。
+
+### 完了したこと
+
+**今すぐドライブ側**
+
+- Spot Discoveryのマーカー操作(`app/spot-discovery.tsx`, `components/map/drive-map-view.tsx`, `contexts/drive-flow-context.tsx`)
+  - 選択中のマーカーを再タップ、または地図の背景(マーカー以外)をタップすると選択解除されるようにした。`DriveFlowContext`に`clearSelectedSpotId`を追加し、`DriveMapView`に`onPress`(背景タップ)・`MapMarkerSpec.zIndex`を追加した
+  - 選択中マーカーの`zIndex`を上げて重なったマーカーより前面に表示するようにした。クラスタリングライブラリは追加していない
+- 時間指定なしの一貫対応(`services/route/time-budget.ts`, `app/conditions.tsx`, `services/route/drive-route-planner-client.ts`, `services/route/drive-plan-mapper.ts`, `app/route-compare.tsx`, `supabase/functions/drive-route-planner/{plan-types.ts,plan-builder.ts}`)
+  - `resolveAvailableMinutes()`が「指定なし」の場合に架空の120分を返していたのをやめ、`undefined`を返すようにした。`availableTimeMinutes`/`RouteOption.targetDurationMinutes`はクライアント・サーバーの型を`number | undefined`に変更し、未指定時はリクエストにキー自体を含めない
+  - `route-compare.tsx`は架空の「目安2時間」を表示せず、`targetDurationMinutes`が無く条件が「指定なし」の場合は「時間指定なし ・ 約◯分」と表示する
+  - `drive-route-planner`の`buildDrivePlans`を、時間指定あり(既存ロジックを完全に維持)/時間指定なし+目的地あり(基本ルートを基準にaddedMinutes評価で寄り道候補を追加)/時間指定なし+目的地なし(内部ヒューリスティック値はanchor距離計算にのみ使い、meta/RouteOptionには一切出さない)の3ケースに整理した
+- 最終目的地の任意化は、既存の`conditions.tsx`「最後はどこにする?」ステップ・`plan-builder.ts`のloop/destination分岐で既に対応済みであることを確認した(追加のロジック変更は不要と判断)
+- 長距離・時間超過時の候補(`supabase/functions/drive-route-planner/{plan-builder.ts,polyline.ts}`)
+  - 基本ルートが時間予算を大幅超過している場合の検索アンカーを、固定1点(直行区間の中点)から、基本ルートのPolylineを25%/50%/75%でサンプリングしたcorridor anchor(最大3点)へ変更した。Deno実行環境はExpo側の`decodeGooglePolyline`を直接importできないため、同一アルゴリズムを`supabase/functions/drive-route-planner/polyline.ts`へ移植した(意図的な複製、コメントで明記)
+  - 評価基準を`addedMinutes = candidate - base`に統一し、目標収束スコアは使わない。実在候補が見つからなければ基本ルートのみを返す(架空の複数案で埋めない)
+- スポット情報の見やすさ(`services/spot/google-places-spot-provider.ts`, `app/spot-discovery.tsx`)
+  - **方針転換**: 当初はGoogle Places評価(rating)の追加を検討したが、実装中に既存コード(`google-places-provider.ts`のFIELD_MASKコメント、`spot-discovery.tsx`の「Googleの評価・口コミは表示していません」という既存ポリシー文言)と競合することが判明したため、ユーザーに確認のうえ**評価表示は追加しない**方針とした(既存方針を維持)
+  - 代わりに、全スポット共通だった固定文言(「実在するスポットです。」等)を、カテゴリ・追加時間・追加距離に基づく具体的な表示へ改善した。Places APIのフィールド追加は行っていない(コスト影響なし)
+
+**旅行プラン側(AI相談型「しおり」への再設計)**
+
+- 型追加(`types/trip.ts`、既存フィールドは変更せずすべて追加のみ、`TRIP_SCHEMA_VERSION`は据え置き): `TransportMode`・`TripTimeHint`・`TripTimelineEntry`(`TripDay.timeline?`)・`TripNotificationSettings`(`Trip.notificationSettings?`、未使用の置き場所のみ)・`Trip.initialWish?`
+- `services/trip/trip-store.ts`に`appendTimelineEntries`/`reorderTimelineEntries`/`removeTimelineEntry`/`updateTimelineEntry`/`attachRouteToTimelineEntry`を追加(すべて既存の`updateTripDay`への薄いラッパー、新しい永続化プリミティブは作っていない)
+- `DriveFlowContext.activeTripDay`に`entryId?`を追加。`app/route-plan.tsx`の`handleDecide`は`entryId`があればそのタイムラインエントリ1件だけにルートを紐付け(`attachRouteToTimelineEntry`)、無ければ従来どおり1日まるごと更新する(既存の`trip-day-detail.tsx`経由フローは無改造のまま維持)
+- 新規Supabase Edge Function `ai-trip-chat`(`index.ts`/`chat-types.ts`/`openai-provider.ts`/`deno.json`、`supabase/config.toml`に登録)を追加。`ai-route-planning`は無改造。既存の`"openai"`予算バケットを共有する。実座標は一切受け取らない設計。AIが具体的な場所を提案したい場合は`needsPlaceSearch`+カテゴリ/エリアの手がかりだけを返させ、場所の創作(店名・座標)はシステム指示で明示的に禁止している
+- `services/ai/trip-chat-client.ts`を新規追加(`route-planning-client.ts`と同じfetch/timeout/実行時応答検証パターン)
+- 画面: `app/trip-create.tsx`(自由記述欄を追加、3項目のまま)、`app/trip-chat.tsx`(新規、旅行全体/特定日のAI相談チャット、提案は個別に「追加する」まで反映されない)、`app/trip-spot-consult.tsx`(新規、AIの提案からGoogle Placesで実在候補を取得しカード一覧で表示、「予定に追加」で実在Placeだけをタイムラインへ追加)、`app/trip-day-timeline.tsx`(新規、縦のタイムライン、▲▼並べ替え・追加・削除、車区間のみ既存ウィザードへのハンドオフ導線)、`app/trip-detail.tsx`(しおりのヘッダー+各日の予定プレビュー+「AIに旅行全体を相談する」ボタンへ再設計)。`app/_layout.tsx`に新規画面を登録した
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし(新規画面追加にともない、一度`npx expo export --platform ios`を実行してexpo-routerのtyped routes型定義を再生成する必要があった)
+- `npm run lint`: エラー・警告なし
+- `npx expo export --platform ios`: iOSバンドルのビルドが成功することを確認
+- `supabase/functions/*`はDeno環境のためこのリポジトリの`tsc`のチェック対象外(`tsconfig.json`の`exclude`で除外済み)。Deno CLIがこの環境に無いため、`ai-trip-chat`・`drive-route-planner`の変更はコードレビューのみで、`deno check`相当の型検証は実施できていない
+- Google Places評価(rating)表示の方針転換について、ユーザーに確認し「既存方針を維持」の回答を得た
+
+### 未完了
+
+- iPhone実機での通し確認(下記「次にやること」参照)はユーザー側で実施予定
+- `ai-trip-chat`は未deploy(Edge Functionの実デプロイ・実際のOpenAI呼び出し確認は次のステップ)
+- 旅行のしおり画面(`trip-day-timeline.tsx`)の予定編集(タイトル変更等)・時刻の詳細設定は今回未実装(追加・削除・並べ替え・移動手段のみ)。地図表示は、`route-plan.tsx`で既知のiOS Expo Go + DriveMapViewネイティブクラッシュ問題(docs/DECISIONS.md参照)を踏まえ、`trip-spot-consult.tsx`ではあえて地図を表示せずカード一覧のみにした(将来Development Buildでの原因切り分け後に追加検討)
+- 通知機能(データモデルの置き場所のみ追加、配信ロジックは未実装。理由は本セッションの最終報告を参照)
+
+### 次にやること
+
+- `supabase functions deploy drive-route-planner` / `supabase functions deploy google-places` / `supabase functions deploy ai-trip-chat`(変更した関数のみ。`ai-route-planning`・`google-routes`は無変更のためdeployしない)
+- iPhone実機で、Spot Discoveryのマーカー4操作→時間未指定時の表示→目的地なしでのPlanning Flow完走→長距離時の候補件数→SpotCardの情報量→旅行作成→AI相談→候補追加→タイムライン確認、の順に確認する
+- 問題がなければcommit・push、レビュー依頼へ進む
+
+---
+
 ## 2026-09-15 (追加作業2: Spot Discoveryのルート沿い検索・Google Routes再計算・時間予算の非ブロッキング化・日記保存の確実性向上)
 
 `feature/100-program-finalization` ブランチで、100 Program完成版の最終実機テスト前に、Spot Discoveryについて残っていた指摘2点(+関連する時間予算・日記保存の調整)を修正した(commit・pushは未実施)。

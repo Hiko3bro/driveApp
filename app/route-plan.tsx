@@ -5,13 +5,16 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { isValidCoordinates } from '@/services/location/coordinates';
+import { formatDistanceLabel } from '@/services/location/format-drive-stats';
 import { openGoogleMapsNavigation } from '@/services/navigation/google-maps-navigation';
 import { resolveAvailableMinutes } from '@/services/route/time-budget';
 import { recalculateSpotRouteWithGoogleRoutes } from '@/services/spot/spot-route-recalculation';
 import { calculateSpotRoutePlan, SpotRoutePlanError } from '@/services/spot/spot-route-plan';
-import { updateTripDay } from '@/services/trip/trip-store';
+import { attachRouteToTimelineEntry, updateTripDay } from '@/services/trip/trip-store';
+import { formatMinutesLabel } from '@/types/drive';
 import type { Coordinates } from '@/types/location';
 import type { RouteOption } from '@/types/route';
 import type { Spot, SpotRoutePlan } from '@/types/spot';
@@ -278,7 +281,11 @@ export default function RoutePlanScreen() {
 
       // 旅行日から始めた計画セッションなら、決定したルートをその日へ保存する
       // (旅行専用の別ルートエンジンは使わず、既存のdrive-route-plannerの結果をそのまま保存)。
-      if (activeTripDay) {
+      if (activeTripDay?.entryId) {
+        // しおりタイムラインの特定区間(車移動)だけに紐付ける。他のエントリや
+        // day全体のgeneratedRoutes/selectedRouteIdは上書きしない。
+        void attachRouteToTimelineEntry(activeTripDay.tripId, activeTripDay.dayId, activeTripDay.entryId, route);
+      } else if (activeTripDay) {
         void updateTripDay(activeTripDay.tripId, activeTripDay.dayId, {
           startLocation: { label: departure.label, coordinates: departure.coordinates },
           endLocation: conditions.returnTarget === 'different' ? conditions.finalDestination : undefined,
@@ -309,7 +316,7 @@ export default function RoutePlanScreen() {
           <Text style={styles.completedTitle}>{route.name}</Text>
           <Text style={styles.completedMeta}>
             {hasSpots ? `寄るところ ${selectedSpots.length}件 ・ ` : ''}
-            {plan.distanceKm}km ・ 約{plan.durationMinutes}分
+            {formatDistanceLabel(plan.distanceKm)} ・ 約{formatMinutesLabel(plan.durationMinutes)}
           </Text>
           {showTimeOverageWarning && (
             <View style={styles.timeOverageWarningBox}>
@@ -362,7 +369,7 @@ export default function RoutePlanScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.routeName}>{route.name}</Text>
         <Text style={styles.meta}>
-          {hasSpots ? '更新後' : 'ルート情報'}: {plan.distanceKm}km ・ 約{plan.durationMinutes}分
+          {hasSpots ? '更新後' : 'ルート情報'}: {formatDistanceLabel(plan.distanceKm)} ・ 約{formatMinutesLabel(plan.durationMinutes)}
         </Text>
         {hasSpots && isRecalculating && (
           <Text style={styles.recalcNoticeText}>実際の道路距離・時間を計算しています…</Text>
@@ -420,113 +427,113 @@ export default function RoutePlanScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   map: {
     flex: 1,
     minHeight: 210,
-    margin: 16,
-    marginBottom: 8,
+    margin: Spacing.lg,
+    marginBottom: Spacing.sm,
   },
   mapDisabledPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef1f3',
-    borderRadius: 12,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.md,
   },
   mapDisabledText: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     fontWeight: '700',
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: Spacing.lg,
   },
   mapDisabledSubText: {
     fontSize: 11,
     lineHeight: 16,
-    color: '#8b959c',
+    color: Colors.textTertiary,
     textAlign: 'center',
-    paddingHorizontal: 20,
-    marginTop: 6,
+    paddingHorizontal: Spacing.xl,
+    marginTop: Spacing.xs + 2,
   },
   centerContent: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-    gap: 16,
+    padding: Spacing.xl,
+    gap: Spacing.lg,
   },
   errorTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'center',
   },
   statusText: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.md,
   },
   routeName: {
-    fontSize: 20,
+    fontSize: Typography.screenTitle.fontSize - 8,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   meta: {
-    fontSize: 14,
-    color: '#5b6770',
-    marginBottom: 10,
+    fontSize: Typography.body.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm + 2,
   },
   recalcNoticeText: {
     fontSize: 12,
-    color: '#8b6a1f',
-    marginBottom: 10,
+    color: Colors.warning,
+    marginBottom: Spacing.sm + 2,
   },
   budgetBox: {
-    borderRadius: 10,
-    backgroundColor: '#e7f6ed',
-    padding: 10,
-    marginBottom: 14,
+    borderRadius: Radius.sm + 2,
+    backgroundColor: Colors.successMuted,
+    padding: Spacing.sm + 2,
+    marginBottom: Spacing.lg - 2,
   },
   budgetBoxError: {
-    backgroundColor: '#fff0ed',
+    backgroundColor: Colors.accentRedMuted,
   },
   budgetText: {
-    color: '#26734d',
+    color: Colors.success,
     fontSize: 12,
     fontWeight: '700',
   },
   budgetTextError: {
-    color: '#c0392b',
+    color: Colors.accentRed,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   stopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 9,
+    marginBottom: Spacing.sm + 1,
   },
   stopOrder: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#e8562f',
+    backgroundColor: Colors.accentBlue,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: Spacing.sm + 2,
   },
   stopOrderText: {
-    color: '#fff',
+    color: Colors.onAccent,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -534,21 +541,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stopName: {
-    color: '#11181C',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Typography.body.fontSize,
     fontWeight: '700',
   },
   stopMeta: {
-    color: '#5b6770',
+    color: Colors.textSecondary,
     fontSize: 11,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
@@ -557,64 +564,64 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: Spacing.xl,
   },
   completedBadge: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     fontWeight: '700',
-    color: '#26734d',
-    marginBottom: 8,
+    color: Colors.success,
+    marginBottom: Spacing.sm,
   },
   completedTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
   completedMeta: {
-    fontSize: 14,
-    color: '#5b6770',
+    fontSize: Typography.body.fontSize,
+    color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 22,
+    marginBottom: Spacing.xl - 2,
   },
   timeOverageWarningBox: {
     width: '100%',
-    borderRadius: 10,
-    backgroundColor: '#fff0ed',
-    padding: 12,
-    marginBottom: 14,
+    borderRadius: Radius.sm + 2,
+    backgroundColor: Colors.accentRedMuted,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg - 2,
   },
   timeOverageWarningText: {
     fontSize: 12,
     lineHeight: 18,
-    color: '#c0392b',
+    color: Colors.accentRed,
     textAlign: 'center',
   },
   completedNotice: {
     width: '100%',
-    borderRadius: 14,
-    backgroundColor: '#eef7fa',
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: Radius.lg - 2,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg - 2,
   },
   completedNoticeTitle: {
-    fontSize: 15,
+    fontSize: Typography.sectionTitle.fontSize,
     fontWeight: '700',
-    color: '#0a7ea4',
-    marginBottom: 6,
+    color: Colors.accentBlue,
+    marginBottom: Spacing.xs + 2,
   },
   completedNoticeText: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 20,
-    color: '#334',
+    color: Colors.textSecondary,
   },
   reviewPolicy: {
     fontSize: 11,
     lineHeight: 17,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 22,
+    marginBottom: Spacing.xl - 2,
   },
   fullWidth: {
     alignSelf: 'stretch',

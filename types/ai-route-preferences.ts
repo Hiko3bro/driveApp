@@ -26,6 +26,14 @@ export interface AiRoutePreferences {
   desiredStops: DesiredStop[];
   drivingStyle: DrivingStyle;
   interpretationSummary: string;
+  /** 自由記述に含まれていた強い地理的希望の検索クエリ(例: "生駒山")。無ければ空文字列。 */
+  requestedAreaQuery: string;
+  /** 最終地点「おまかせ」の場合のみ、AIが考えた立ち寄り先のタイプの検索クエリ(例: "夜景スポット")。無ければ空文字列。 */
+  suggestedGoalQuery: string;
+  /** suggestedGoalQueryとは体験の異なる2つ目の候補。無ければ空文字列。 */
+  suggestedGoalQueryAlt1: string;
+  /** 3つ目の候補。無ければ空文字列。 */
+  suggestedGoalQueryAlt2: string;
 }
 
 /** AI解釈が実際に使われたか、サーバー側で安全側にフォールバックされたか。 */

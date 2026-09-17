@@ -44,11 +44,13 @@ interface DriveFlowState {
   /**
    * 現在の計画セッションが旅行プランのどの日に紐づいているか。旅行日から
    * 「ルートを探す」で入った場合のみ設定される。nullなら通常の「今すぐドライブ」。
-   * resetPlanningSession()で必ずクリアする(新規ドライブに前回の旅行紐付けを
-   * 持ち越さない)。beginConditionsEdit()(条件を変える)では維持する(同じ旅行日の
-   * 編集を続けているため)。
+   * entryIdは、旅行の1日まるごとではなく、しおりタイムラインの特定の区間(車移動)
+   * だけにこのセッションのルート結果を紐付けたい場合に設定する(未設定なら従来どおり
+   * 1日まるごとの更新)。resetPlanningSession()で必ずクリアする(新規ドライブに前回の
+   * 旅行紐付けを持ち越さない)。beginConditionsEdit()(条件を変える)では維持する
+   * (同じ旅行日の編集を続けているため)。
    */
-  activeTripDay: { tripId: string; dayId: string } | null;
+  activeTripDay: { tripId: string; dayId: string; entryId?: string } | null;
 }
 
 interface DriveFlowContextValue extends DriveFlowState {
@@ -58,6 +60,8 @@ interface DriveFlowContextValue extends DriveFlowState {
   setSelectedRouteId: (routeId: string) => void;
   initializeSpotDiscovery: (routeId: string, spots: Spot[]) => void;
   setSelectedSpotId: (routeId: string, spotId: string) => void;
+  /** 選択中のスポットを解除する(地図の背景タップ・同じMarker再タップ等から呼ぶ)。 */
+  clearSelectedSpotId: (routeId: string) => void;
   setSelectedSpotIds: (routeId: string, spotIds: string[]) => void;
   setDriveRecord: (record: DriveRecordingResult) => void;
   /**
@@ -74,7 +78,7 @@ interface DriveFlowContextValue extends DriveFlowState {
   /** AI解釈結果を保存する。nullを渡すとクリアする(呼び出し失敗時・条件変更時など)。 */
   setAiInterpretation: (result: AiInterpretationResult | null) => void;
   /** 旅行日から計画を始める際にセットする。通常の「今すぐドライブ」ではnullのまま。 */
-  setActiveTripDay: (value: { tripId: string; dayId: string } | null) => void;
+  setActiveTripDay: (value: { tripId: string; dayId: string; entryId?: string } | null) => void;
   /**
    * ホームの「今からドライブ」など、新規にドライブを1回始める入口からだけ呼ぶ。
    * 「1回のドライブ計画・実走・記録」というセッションに属する一時状態(出発地点・
@@ -229,6 +233,15 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const clearSelectedSpotId = useCallback((routeId: string) => {
+    setState((prev) => {
+      if (prev.spotRouteId !== routeId || prev.selectedSpotId === null) {
+        return prev;
+      }
+      return { ...prev, selectedSpotId: null };
+    });
+  }, []);
+
   const setSelectedSpotIds = useCallback((routeId: string, spotIds: string[]) => {
     setState((prev) => {
       if (prev.spotRouteId !== routeId || spotIds.length > MAX_SELECTED_SPOTS) {
@@ -273,7 +286,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, aiInterpretation: result }));
   }, []);
 
-  const setActiveTripDay = useCallback((value: { tripId: string; dayId: string } | null) => {
+  const setActiveTripDay = useCallback((value: { tripId: string; dayId: string; entryId?: string } | null) => {
     setState((prev) => ({ ...prev, activeTripDay: value }));
   }, []);
 
@@ -312,6 +325,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedRouteId,
       initializeSpotDiscovery,
       setSelectedSpotId,
+      clearSelectedSpotId,
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,
@@ -330,6 +344,7 @@ export function DriveFlowProvider({ children }: { children: ReactNode }) {
       setSelectedRouteId,
       initializeSpotDiscovery,
       setSelectedSpotId,
+      clearSelectedSpotId,
       setSelectedSpotIds,
       setDriveRecord,
       addDiaryEntry,

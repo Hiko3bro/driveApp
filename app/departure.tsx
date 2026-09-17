@@ -8,6 +8,7 @@ import { DriveMapView, type DriveMapViewHandle } from '@/components/map/drive-ma
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { SelectionCard } from '@/components/ui/selection-card';
 import { WizardProgressHeader } from '@/components/ui/wizard-progress-header';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { DEMO_MAP_REGION, isValidCoordinates } from '@/services/location/coordinates';
 import { requestCurrentLocation } from '@/services/location/current-location';
@@ -307,7 +308,7 @@ export default function DepartureScreen() {
       <SafeAreaView style={styles.safeArea}>
         <WizardProgressHeader step={1} total={7} />
         <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#0a7ea4" />
+          <ActivityIndicator size="large" color={Colors.accentBlue} />
           <Text style={styles.statusText}>現在地を取得しています…</Text>
         </View>
       </SafeAreaView>
@@ -433,40 +434,38 @@ export default function DepartureScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
+    padding: Spacing.xl,
   },
   title: {
-    fontSize: 20,
+    fontSize: Typography.screenTitle.fontSize - 8,
     fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 20,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xl - 4,
   },
   homeCard: {
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#d7dee0',
-    backgroundColor: '#fff',
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   homeCardTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   homeCardSubtitle: {
-    fontSize: 13,
-    color: '#5b6770',
-    marginBottom: 12,
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
   },
   homeCardActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: Spacing.md,
   },
   homeCardButton: {
     flex: 1,
@@ -475,43 +474,43 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-    gap: 16,
+    padding: Spacing.xl,
+    gap: Spacing.lg,
   },
   statusTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'center',
   },
   statusText: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#5b6770',
+    color: Colors.textSecondary,
     textAlign: 'center',
   },
   stackGap: {
-    marginTop: 12,
-    gap: 12,
+    marginTop: Spacing.md,
+    gap: Spacing.md,
     alignSelf: 'stretch',
   },
   pickHeader: {
-    padding: 20,
-    paddingBottom: 12,
-    gap: 6,
+    padding: Spacing.xl,
+    paddingBottom: Spacing.md,
+    gap: Spacing.xs + 2,
   },
   map: {
     flex: 1,
-    marginHorizontal: 20,
+    marginHorizontal: Spacing.xl,
   },
   pickFooter: {
-    padding: 20,
-    gap: 12,
+    padding: Spacing.xl,
+    gap: Spacing.md,
   },
   errorText: {
-    color: '#c0392b',
-    fontSize: 13,
+    color: Colors.accentRed,
+    fontSize: Typography.secondary.fontSize,
     textAlign: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: Spacing.xl,
   },
 });

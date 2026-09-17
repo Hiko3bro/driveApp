@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Colors } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 
 /**
@@ -21,7 +22,7 @@ export default function DriveTabFallbackScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.centerContent}>
-        <ActivityIndicator size="large" color="#0a7ea4" />
+        <ActivityIndicator size="large" color={Colors.accentBlue} />
       </View>
     </SafeAreaView>
   );
@@ -30,7 +31,7 @@ export default function DriveTabFallbackScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   centerContent: {
     flex: 1,

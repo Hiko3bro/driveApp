@@ -4,8 +4,10 @@ import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
-import { formatDistanceKm, formatElapsedTime } from '@/services/location/format-drive-stats';
+import { formatDistanceKm, formatDistanceLabel, formatElapsedTime } from '@/services/location/format-drive-stats';
+import { formatMinutesLabel } from '@/types/drive';
 
 /**
  * 日記タブの一覧から、任意の過去の日記を見るための画面。既存の
@@ -53,7 +55,7 @@ export default function DiaryDetailScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>選択したルート</Text>
           <Text style={styles.sectionBody}>
-            {entry.route.name} ・ {entry.route.distanceKm}km ・ 約{entry.route.durationMinutes}分
+            {entry.route.name} ・ {formatDistanceLabel(entry.route.distanceKm)} ・ {formatMinutesLabel(entry.route.durationMinutes)}
           </Text>
         </View>
 
@@ -95,80 +97,80 @@ export default function DiaryDetailScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 24,
+    padding: Spacing.xl,
   },
   title: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   date: {
-    fontSize: 13,
-    color: '#5b6770',
-    marginBottom: 12,
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
   },
   memo: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     lineHeight: 21,
-    color: '#334',
-    marginBottom: 16,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.lg,
   },
   statsCard: {
-    borderRadius: 16,
-    backgroundColor: '#f5f6f7',
-    padding: 16,
-    marginBottom: 20,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl - 4,
   },
   statRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
   statLabel: {
-    fontSize: 13,
-    color: '#5b6770',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   statValue: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   section: {
-    marginBottom: 18,
+    marginBottom: Spacing.lg + 2,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
+    fontSize: Typography.sectionTitle.fontSize,
+    fontWeight: Typography.sectionTitle.fontWeight,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   sectionBody: {
-    fontSize: 13,
+    fontSize: Typography.secondary.fontSize,
     lineHeight: 20,
-    color: '#334',
-    marginBottom: 4,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
   },
   photoRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Spacing.sm + 2,
   },
   photoThumb: {
     width: 96,
     height: 96,
-    borderRadius: 12,
-    backgroundColor: '#eef2f3',
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceElevated,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
 });

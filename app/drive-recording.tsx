@@ -4,9 +4,11 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { Colors, Radius, Spacing, Typography } from '@/constants/design-tokens';
 import { useDriveFlow } from '@/contexts/drive-flow-context';
 import { useDriveRecording } from '@/hooks/use-drive-recording';
-import { formatDistanceKm, formatElapsedTime } from '@/services/location/format-drive-stats';
+import { formatDistanceKm, formatDistanceLabel, formatElapsedTime } from '@/services/location/format-drive-stats';
+import { formatMinutesLabel } from '@/types/drive';
 import type { RouteOption } from '@/types/route';
 import type { Spot } from '@/types/spot';
 
@@ -100,7 +102,7 @@ export default function DriveRecordingScreen() {
         <Text style={styles.routeName}>{route.name}</Text>
         <Text style={styles.meta}>
           {selectedSpots.length > 0 ? `経由地 ${selectedSpots.length}件 ・ ` : ''}
-          {route.distanceKm}km ・ 約{route.durationMinutes}分(ルート予定)
+          {formatDistanceLabel(route.distanceKm)} ・ 約{formatMinutesLabel(route.durationMinutes)}(ルート予定)
         </Text>
 
         <View style={styles.statusRow}>
@@ -173,114 +175,114 @@ export default function DriveRecordingScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.background,
   },
   content: {
     flexGrow: 1,
-    padding: 20,
+    padding: Spacing.lg + 4,
   },
   routeName: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#11181C',
-    marginBottom: 4,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
   },
   meta: {
-    fontSize: 13,
-    color: '#5b6770',
-    marginBottom: 14,
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.lg - 2,
   },
   statusRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm + 2,
   },
   statusBadge: {
     alignSelf: 'flex-start',
     paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: '#eef2f3',
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.surfaceElevated,
   },
   statusBadgeRecording: {
-    backgroundColor: '#e7f6ed',
+    backgroundColor: Colors.successMuted,
   },
   statusBadgeStopped: {
-    backgroundColor: '#eef7fa',
+    backgroundColor: Colors.accentBlueMuted,
   },
   statusBadgeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#334',
+    color: Colors.textPrimary,
   },
   demoBadge: {
     alignSelf: 'flex-start',
     paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: '#fff5d6',
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.warningMuted,
   },
   demoBadgeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#7a5b18',
+    color: Colors.warning,
   },
   noticeText: {
     fontSize: 12,
     lineHeight: 18,
-    color: '#7a5b18',
-    marginBottom: 12,
+    color: Colors.warning,
+    marginBottom: Spacing.md,
   },
   statsCard: {
-    borderRadius: 16,
-    backgroundColor: '#f5f6f7',
-    padding: 16,
-    marginBottom: 20,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl - 4,
   },
   statRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: Spacing.sm + 2,
   },
   statLabel: {
-    fontSize: 13,
-    color: '#5b6770',
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
     fontWeight: '600',
   },
   statValue: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#11181C',
+    color: Colors.textPrimary,
   },
   statValueSmall: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#11181C',
+    color: Colors.textPrimary,
     textAlign: 'right',
     flexShrink: 1,
   },
   section: {
-    marginBottom: 12,
+    marginBottom: Spacing.md,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#11181C',
-    marginBottom: 8,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
   spotItem: {
-    fontSize: 13,
-    color: '#334',
-    marginBottom: 4,
+    fontSize: Typography.secondary.fontSize,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
   },
   footer: {
-    padding: 16,
-    paddingTop: 8,
-    gap: 10,
+    padding: Spacing.lg,
+    paddingTop: Spacing.sm,
+    gap: Spacing.sm + 2,
   },
   errorText: {
-    color: '#c0392b',
+    color: Colors.accentRed,
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
