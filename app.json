@@ -8,7 +8,11 @@
     "scheme": "drivediscoveryapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kazuhiko.drivediscovery",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -59,6 +63,18 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "owner": "kazuhiko0316",
+    "extra": {
+      "eas": {
+        "projectId": "c3c071c2-217b-4a1b-b351-0695dd8d5b34"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c3c071c2-217b-4a1b-b351-0695dd8d5b34"
     }
   }
 }

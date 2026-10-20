@@ -66,6 +66,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 - `expo-image-picker` … 日記作成時に端末の写真ライブラリから写真を選ぶため追加(許可ダイアログの表示、許可拒否・Expo Go等で使えない場合のハンドリング)
 - `react-native-view-shot` … 共有カード(PHOTO/DATA/MEMORY)のプレビューを画像ファイルとして生成するため追加
 - `expo-sharing` … 生成した画像をOS標準の共有シート(Instagram/LINE/AirDrop/保存など)へ渡すため追加
+- `expo-updates` … EAS Updateで、iPhoneにインストール済みのPreview BuildへJS/アセットの更新を配信するため追加(`runtimeVersion`は`fingerprint`ポリシー)
 - `expo-crypto` … 端末単位の匿名ID(AIレート制限用、`x-install-id`)を暗号学的に安全に生成するため追加
 - Expo → Supabase Edge Functions(`ai-route-planning` / `ai-trip-chat` / `google-places` / `google-routes` / `drive-route-planner`) → OpenAI・Google Places API・Google Routes API という構成です。Expoアプリから外部APIへ直接接続することはなく、公開前提のSupabase publishable key(`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、実値は`.env`のみに置きコミットしません)だけをアプリに含めています。OpenAIには抽象化した嗜好・会話内容のみ(緯度経度・住所は送信しない)、Google Places/Routesには検索・計測に必要な範囲の座標のみを送信します。ドライブ計画のAI相談(`ai-trip-chat`、Drive Planning Assistant設計)も同じ方針で、AIが具体的な場所を示したい場合は`defaultOriginQuery`/`destinationQuery`という検索意図の文字列のみを返させ、実在確認は常にアプリ側がGoogle Places(Text Search/Nearby Search)経由で別途行います。今ドラ・ドライブ計画のAI相談には、現在日付から機械的に算出した季節の参考情報も渡していますが、開花・積雪等のリアルタイムの実況情報は取得していません。Google Mapsへの外部ナビ連携はAPIキー不要のUniversal URL(`services/navigation/google-maps-navigation.ts`)を使っています
 
@@ -75,6 +76,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 
 - 現在のリリース目標は **iOS TestFlight** です
 - iOSのExpo Go実機を正式な動作検証対象とし、リリース前の実機確認はiOSを基準に行います
+- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** へ移行中です。プロジェクト側の設定は完了しており、初回のiOSビルドはApple Developer Programの承認後に行います(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
 - Android対応可能なReact Native / Expoの共通構造は維持しますが、Android実機は現時点で未検証のため動作保証の対象外です
 - Androidの実機検証と正式対応は将来のリリースで行う予定です
 
@@ -96,6 +98,47 @@ npx expo start
 - Android エミュレータ
 - iOS シミュレータ
 - [Expo Go](https://expo.dev/go)
+
+### EAS Preview Build / EAS Updateによる実機テスト(準備中)
+
+Expo Go + LAN接続に代わり、iPhone単体でアプリを起動・更新できる構成です。設定は `eas.json`(`preview` / `production` プロファイル)と `app.json`(`ios.bundleIdentifier` = `com.kazuhiko.drivediscovery`、`runtimeVersion.policy` = `fingerprint`、`updates.url`)にあります。EASプロジェクトは `@kazuhiko0316/drive-discovery-app` です。
+
+> 現在はApple Developer Programの承認待ちのため、`eas build` / 証明書・プロビジョニングの作成 / 実機登録はまだ行っていません。
+
+**1. EAS環境変数の登録(初回のみ)**
+
+`.env` は `.gitignore` 対象のためEAS Buildのクラウド環境には送られません。アプリが使う次の2つを、EASの `preview` 環境に登録します(実値はコード・コミット・ドキュメントに書かないこと)。
+
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+expo.dev のプロジェクトページ(Project settings › Environment variables)から、Environment に `preview`(必要なら `development` / `production` も)、Visibility に `Sensitive` を選んで登録するのが簡単です。CLIで登録する場合は次のとおりです(値がシェル履歴に残る点に注意)。
+
+```bash
+npx eas-cli env:create --environment preview --name EXPO_PUBLIC_SUPABASE_URL --value "<値>" --visibility sensitive
+npx eas-cli env:create --environment preview --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value "<値>" --visibility sensitive
+npx eas-cli env:list --environment preview   # 登録内容の確認
+```
+
+`eas env:pull` はローカルの `.env` を上書きするため、不用意に実行しないでください。
+
+**2. Preview Buildの作成とインストール(Apple Developer承認後)**
+
+```bash
+npx eas-cli device:create                       # iPhoneのUDIDを登録(表示されるURL/QRをiPhoneで開く)
+npx eas-cli build -p ios --profile preview      # 初回はApple IDでログインし、証明書・プロファイルをEASに管理させる
+```
+
+ビルド完了後に表示されるURL/QRをiPhoneで開いてインストールします。iPhone側で「設定 › プライバシーとセキュリティ › デベロッパモード」をONにする必要があります。
+
+**3. 更新の配信**
+
+```bash
+npx eas-cli update --channel preview --environment preview --message "変更内容"
+```
+
+- JS/TS・画像などの変更だけなら `eas update` で配信できます。iPhoneでアプリを再起動すると更新を取得し、通常は次回起動時に反映されます
+- 依存パッケージの追加・config pluginや権限の変更など**ネイティブ側の変更**をした場合はfingerprintが変わるため、`eas build` で作り直してインストールし直します(古いバイナリには配信されません)
 
 ### iOS Expo Goでの確認手順
 

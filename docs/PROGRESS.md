@@ -21,6 +21,41 @@
 
 ---
 
+## 2026-10-20 (EAS Preview Build / EAS Update への移行準備)
+
+`feature/100-program-finalization` を起点に `feature/eas-preview-update` ブランチを作成し、Expo Go + LAN接続から EAS Preview Build(Internal Distribution)+ EAS Update へ移行するための、Apple Developer承認前に行える準備作業を実施した。
+
+### 完了したこと
+
+- `npx expo install expo-updates` で `expo-updates`(~57.0.26)を導入
+- `eas init` で EASプロジェクト `@kazuhiko0316/drive-discovery-app` を作成し、`app.json` に `owner` / `extra.eas.projectId` を追加
+- `eas update:configure` で `updates.url` を設定。自動で付与された `runtimeVersion.policy: appVersion` は方針どおり `fingerprint` に変更。同コマンドが解決済みconfigから `android.permissions`(重複を含む)と `extra.router` を書き戻したため、意図しない変更として削除した
+- `eas.json` を新規作成(`preview`: internal distribution / channel `preview` / environment `preview`、`production`: channel `production` / autoIncrement、`appVersionSource: remote`)
+- `app.json` に `ios.bundleIdentifier`(`com.kazuhiko.drivediscovery`)と `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` を追加
+- AGENTS.md のSDK表記を v54 → v57 に修正(実際の依存は既にSDK 57)
+- README に EAS環境変数の登録手順・Preview Build/EAS Updateの手順を追記
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラーなし
+- `npx expo config --type public`: bundleIdentifier / projectId / runtimeVersion / updates.url が反映されていること
+- `npx expo start`: 開発サーバーが起動し、iOS向けmanifestに fingerprint の runtimeVersion が入ること、iOSバンドル(1854 modules)がエラーなくビルドされること
+- `npx expo-doctor`: SDK 57内のpatchバージョン差(expo 57.0.20 → 57.0.30 など16パッケージ)の1件のみ警告。今回の変更とは無関係のため据え置き
+
+### 未完了
+
+- Apple Developer Programの承認待ちのため、`eas build` / `eas submit` / 証明書・プロビジョニングの作成 / 実機(UDID)登録は未実施
+- EASの `preview` 環境への環境変数(`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`)の登録は未実施(手順はREADMEに記載)
+
+### 次にやること
+
+- Apple Developer承認後: 環境変数登録 → `eas device:create` → `eas build -p ios --profile preview` → iPhoneへインストール → `eas update` で更新が届くことを確認
+- 初回ビルド後、ローカル(Windows)とビルドサーバーでfingerprintが一致するか(`eas fingerprint:compare`)を確認する
+- 必要に応じて `npx expo install --check` でSDK 57内のpatch更新を別ブランチで適用
+
+---
+
 ## 2026-09-17g (Photo API真のlazy load・Spot Card整理・選択済みRoute維持でのOptional Stop追加)
 
 `feature/100-program-finalization` ブランチで、実機テストで見つかった複数の重大な不具合(1. Photo API request暴走・非表示Spotへの写真取得・同一Placeの重複取得、2. 今ドラSpot CardのUI重複・重なり、3. 選択済みRouteへOptional Stopを追加すると元Routeの主要構成が失われる重大な不具合、4. Route Compare/warning UIの密度・強さ、5. チップサイズ、6. 「半日」の解釈ゆれ)を修正した(commit・pushは未実施)。検索品質自体の大規模な再設計・新機能追加・高沢さんコード統合は今回行っていない。

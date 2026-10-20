@@ -6,6 +6,10 @@
 
 ## [未リリース]
 
+### 追加(開発環境)
+
+- PCとiPhoneが同じWi-Fiにいなくても実機テストできるよう、EAS Preview Build(Internal Distribution)+ EAS Updateの設定を追加した(`eas.json`、`expo-updates`、`app.json`のBundle ID・runtimeVersion・更新URL)。初回のiOSビルドはApple Developer Programの承認後に行う
+
 ### 変更(Visual Design)
 
 - アプリ全体のVisual DesignをDark Theme・Design System(色/角丸/余白/文字サイズの共通ルール)ベースへ作り直した。ホーム画面・下部ナビ・今ドラ・ドライブ計画チャット・Place候補カード・ルート提案カード・地図の見た目を統一し、チーム内の他アプリと同じプロダクトファミリーに見えるようにした。検索・提案・ルート生成の中身(条件反映・候補の質・地域制約)は変更していない
