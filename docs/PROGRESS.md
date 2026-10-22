@@ -21,6 +21,39 @@
 
 ---
 
+## 2026-10-22 (iPhone Preview Build実機テスト・Supabase/Upstash障害の復旧)
+
+Apple Developer Programの登録完了を受け、EAS Preview Build(Internal Distribution)でのiPhone単体テストを開始した。テスト中にSupabaseを使う機能が一斉に接続エラーになったため原因を切り分け、サーバー側の設定変更のみで復旧した(アプリのコード変更・再ビルドなし)。
+
+### 完了したこと
+
+- EASの`preview`環境に`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`を登録(expo.devから手動登録)
+- iPhoneの実機登録(`eas device:create`)と、`preview`プロファイルでの初回iOSビルド(コミット`def5839`)を作成し、iPhoneへインストール
+- 障害対応: SupabaseプロジェクトがPausedだったためResumeし、レート制限用のUpstash Redisが削除されていたため新しいRedis(`drive-discovery-rate-limit`)を作成して、Supabase Secretsの`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`を更新
+- READMEに「トラブルシューティング」節(SupabaseのPause / Upstash Redisの削除の確認と対処)を追加
+
+### 確認したこと
+
+- 環境変数: ローカル`.env`とEAS `preview`環境の2変数は、文字数・SHA-256ハッシュで比較して完全一致(値は表示せずに比較)
+- Preview Build: ビルドログでpreview環境の2変数が読み込まれていること、ダウンロードした.ipaの`main.jsbundle`に2つの値が埋め込まれていること、更新チャンネルが`preview`でEAS Updateは未配信であることを確認
+- 障害の切り分け1(SupabaseのPause): Project URLのホスト名がシステムDNS・DNS-over-HTTPS(Cloudflare/Google)のいずれでもNXDOMAINとなり、PCからも`ENOTFOUND`で到達できなかった。Resume後に解決できるようになった
+- 障害の切り分け2(Upstashの削除): Resume後、全Edge Function(`drive-route-planner` / `ai-trip-chat` / `google-routes` / `google-places`)が、新規のinstall-idでも`Retry-After`なしのHTTP 429 `RATE_LIMITED`を返した。コード上、`Retry-After`なしの429はUpstash未設定・接続失敗時(`RATE_LIMIT_FAIL_OPEN=false`)にのみ発生するため、Upstash側の問題と特定した
+- 復旧後、iPhone単体(Preview Build)で、起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談が正常に動作することを確認
+- `npx tsc --noEmit` / `npm run lint`: エラーなし(ドキュメントのみの変更)
+
+### 未完了
+
+- `eas update`による更新配信がPreview Buildへ届くことの確認
+- ローカル(Windows)とビルドサーバーのfingerprintが一致するかの確認(`eas fingerprint:compare`)
+- `docs/TESTING-CHECKLIST.md`(回帰テスト用)は未コミットのまま
+
+### 次にやること
+
+- JSの小さな変更で`eas update --channel preview --environment preview`を試し、iPhoneで反映されることを確認する
+- 長期間テストしない期間の後は、実機テスト前にSupabase(Paused)・Upstash(Deleted)の状態を先に確認する
+
+---
+
 ## 2026-10-20 (EAS Preview Build / EAS Update への移行準備)
 
 `feature/100-program-finalization` を起点に `feature/eas-preview-update` ブランチを作成し、Expo Go + LAN接続から EAS Preview Build(Internal Distribution)+ EAS Update へ移行するための、Apple Developer承認前に行える準備作業を実施した。

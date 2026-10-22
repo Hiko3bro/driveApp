@@ -76,7 +76,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 
 - 現在のリリース目標は **iOS TestFlight** です
 - iOSのExpo Go実機を正式な動作検証対象とし、リリース前の実機確認はiOSを基準に行います
-- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** へ移行中です。プロジェクト側の設定は完了しており、初回のiOSビルドはApple Developer Programの承認後に行います(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
+- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** でのiPhone単体の実機テストに移行しました。Preview Buildでの起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談を実機で確認済みです(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
 - Android対応可能なReact Native / Expoの共通構造は維持しますが、Android実機は現時点で未検証のため動作保証の対象外です
 - Androidの実機検証と正式対応は将来のリリースで行う予定です
 
@@ -99,11 +99,11 @@ npx expo start
 - iOS シミュレータ
 - [Expo Go](https://expo.dev/go)
 
-### EAS Preview Build / EAS Updateによる実機テスト(準備中)
+### EAS Preview Build / EAS Updateによる実機テスト
 
 Expo Go + LAN接続に代わり、iPhone単体でアプリを起動・更新できる構成です。設定は `eas.json`(`preview` / `production` プロファイル)と `app.json`(`ios.bundleIdentifier` = `com.kazuhiko.drivediscovery`、`runtimeVersion.policy` = `fingerprint`、`updates.url`)にあります。EASプロジェクトは `@kazuhiko0316/drive-discovery-app` です。
 
-> 現在はApple Developer Programの承認待ちのため、`eas build` / 証明書・プロビジョニングの作成 / 実機登録はまだ行っていません。
+> 初回のPreview Build(Internal Distribution)は作成・インストール済みで、iPhone単体での起動とSupabaseを使う機能の動作を確認しています。Supabaseを使う機能がすべて失敗する場合は「トラブルシューティング」を参照してください。
 
 **1. EAS環境変数の登録(初回のみ)**
 
@@ -264,6 +264,23 @@ npx expo start --web  # Web向けバンドルが正常に起動するかの確�
 - ネイティブアプリのビルド設定(iOS/Android)はデフォルトのままです
 - Place写真(今ドラ・ドライブ計画チャットの候補カード)は、画面に実際に見えている候補(+直後に見えそうな1件程度)だけを対象に取得します(横スクロール/ページ送りで次のカードが見えた時点で取得)。同じ場所は、今ドラ・ドライブ計画のどちらの画面でも1回のアプリ利用中に1度だけ実際にAPIへ取得しに行き(Place IDをキーにしたメモリ内キャッシュ、端末再起動で消えます)、以降は再表示してもキャッシュから即座に表示します。1回のアプリ利用中に取得できる件数には上限があり、上限に達した以降は写真無しのプレースホルダー表示になりますが、スポット検索自体は引き続き通常どおり使えます
 - ドライブ計画チャットでルート候補を1つ選んだ後に温泉・カフェ等のOptional Stopを追加する操作は、必ず「選択中のルートの構成(主要な経由地点・海沿い/山道等のテーマ)を維持したまま1件だけ追加する」処理として扱います。「このルートで◯◯追加して」のような言い回しも同様に扱われ、「目的地を◯◯に変更して」のように明示的に目的地の変更を求めた場合のみ目的地が置き換わります
+
+## トラブルシューティング
+
+### Supabaseを使う機能がすべて失敗する(「ルートを取得できませんでした」「うまく接続できませんでした」等)
+
+今ドラ・ドライブ計画のAI相談など、Supabase Edge Functionを使う機能が個別ではなく**一斉に**失敗する場合は、アプリやビルドより先に、次のサーバー側の状態を確認してください。いずれもアプリのコード変更・再ビルドなしで復旧できます。
+
+1. **SupabaseがPausedになっていないか**
+   - 症状: SupabaseのProject URLのホスト名がDNSで解決できない(`ENOTFOUND` / NXDOMAIN)。Edge Functionにリクエストが届かない
+   - 確認: [Supabase Dashboard](https://supabase.com/dashboard) でプロジェクトの状態が **Paused** になっていないか。無料プランは一定期間使わないと自動でPauseされます
+   - 対処: **Restore / Resume** を実行し、状態が **Healthy** になるまで待つ(DNSへの反映まで数分かかることがあります)
+2. **Upstash RedisがDeletedになっていないか**
+   - 症状: Edge Functionには届くが、すべての関数(`drive-route-planner` / `ai-trip-chat` / `google-routes` / `google-places` 等)が、初めて使う端末からでも **HTTP 429 `RATE_LIMITED`** を返す。本当に回数上限に達した場合は `Retry-After` ヘッダーが付くが、Upstashに接続できない場合は付かない(`RATE_LIMIT_FAIL_OPEN=false` のため、レート制限を確認できないリクエストはすべて拒否される)
+   - 確認: [Upstash Console](https://console.upstash.com) で、レート制限用のRedisデータベースが存在し、Active か(Deletedになっていないか)
+   - 対処: 新しいRedisデータベースを作成し、その **REST API** 欄の値で、Supabase Dashboardの Edge Functions › Secrets にある `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` を上書きする。`RATE_LIMIT_HASH_SECRET` / `RATE_LIMIT_FAIL_OPEN` は変更しない。関数の再デプロイは不要
+3. **Preview Buildに接続設定が入っているか**(1・2で解決しない場合)
+   - EASの `preview` 環境に `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が登録されているか(`npx eas-cli env:list preview`。値を画面共有・チャットに出さないよう注意)
 
 ## 開発に参加するAIエージェント/開発者へ
 
