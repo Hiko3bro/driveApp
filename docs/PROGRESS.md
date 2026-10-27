@@ -21,6 +21,105 @@
 
 ---
 
+## 2026-10-27 (EAS Updateの実機反映確認・fingerprint一致確認)
+
+EAS Preview Build(Internal Distribution)をインストールしたiPhoneに、`preview`チャンネル経由のEAS Updateが届くことを確認した。これにより、JS/TSの変更は再ビルドなしでiPhoneへ反映できる運用が確立した。
+
+### 完了したこと
+
+- `eas fingerprint:compare`で、ローカル(Windows)と最新のPreview Build(コミット`def5839`)のfingerprintが一致することを確認(`1d68ad408b0f8fee935250fc91a566db74127380`)
+- 確認用の一時的な変更として、プロフィール画面「アプリについて」の表示を`ドライブ発見(100 Program版)✓`に1文字だけ変更し、`eas update --channel preview --environment preview`で配信(Update group `84301fbd-…`)。変更はコミットしていない
+- iPhoneで反映を確認した後、表示を元に戻し、同じ`preview`チャンネルへ元に戻す更新を配信(Update group `7bfa7961-…`)
+
+### 確認したこと
+
+- iPhone単体(PCと同じWi-Fiでなくても)でPreview Buildを起動できること
+- `preview`チャンネル経由のEAS UpdateがiPhoneに届き、アプリを2回起動し直す(1回目でダウンロード、2回目で適用)とプロフィール画面に✓が表示されること
+- JS/TSの小さな変更は、fingerprint(runtimeVersion)が変わらない限り、再ビルドなしでEAS Updateから反映できること
+- `eas update`実行時に、EASの`preview`環境から`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`が読み込まれること(値は表示されない)
+- Supabase / Upstash復旧後、iPhoneで今ドラのルート提案・ドライブ計画のAI相談が正常に動作すること
+- `npx tsc --noEmit` / `npm run lint`: エラーなし
+
+### 未完了
+
+- `docs/TESTING-CHECKLIST.md`(回帰テスト用)は未コミットのまま
+- `feature/eas-preview-update`ブランチのpush・Pull Request作成
+
+### 次にやること
+
+- 今後のJS/TSの変更は、実装 → tsc/lint → `eas update --channel preview --environment preview` → iPhoneで確認、の流れで実機テストする
+- 依存パッケージ・config plugin・権限等のネイティブ側の変更時は、`eas fingerprint:compare`でfingerprintの変化を確認し、変わる場合は`eas build -p ios --profile preview`で作り直す
+
+---
+
+## 2026-10-22 (iPhone Preview Build実機テスト・Supabase/Upstash障害の復旧)
+
+Apple Developer Programの登録完了を受け、EAS Preview Build(Internal Distribution)でのiPhone単体テストを開始した。テスト中にSupabaseを使う機能が一斉に接続エラーになったため原因を切り分け、サーバー側の設定変更のみで復旧した(アプリのコード変更・再ビルドなし)。
+
+### 完了したこと
+
+- EASの`preview`環境に`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`を登録(expo.devから手動登録)
+- iPhoneの実機登録(`eas device:create`)と、`preview`プロファイルでの初回iOSビルド(コミット`def5839`)を作成し、iPhoneへインストール
+- 障害対応: SupabaseプロジェクトがPausedだったためResumeし、レート制限用のUpstash Redisが削除されていたため新しいRedis(`drive-discovery-rate-limit`)を作成して、Supabase Secretsの`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`を更新
+- READMEに「トラブルシューティング」節(SupabaseのPause / Upstash Redisの削除の確認と対処)を追加
+
+### 確認したこと
+
+- 環境変数: ローカル`.env`とEAS `preview`環境の2変数は、文字数・SHA-256ハッシュで比較して完全一致(値は表示せずに比較)
+- Preview Build: ビルドログでpreview環境の2変数が読み込まれていること、ダウンロードした.ipaの`main.jsbundle`に2つの値が埋め込まれていること、更新チャンネルが`preview`でEAS Updateは未配信であることを確認
+- 障害の切り分け1(SupabaseのPause): Project URLのホスト名がシステムDNS・DNS-over-HTTPS(Cloudflare/Google)のいずれでもNXDOMAINとなり、PCからも`ENOTFOUND`で到達できなかった。Resume後に解決できるようになった
+- 障害の切り分け2(Upstashの削除): Resume後、全Edge Function(`drive-route-planner` / `ai-trip-chat` / `google-routes` / `google-places`)が、新規のinstall-idでも`Retry-After`なしのHTTP 429 `RATE_LIMITED`を返した。コード上、`Retry-After`なしの429はUpstash未設定・接続失敗時(`RATE_LIMIT_FAIL_OPEN=false`)にのみ発生するため、Upstash側の問題と特定した
+- 復旧後、iPhone単体(Preview Build)で、起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談が正常に動作することを確認
+- `npx tsc --noEmit` / `npm run lint`: エラーなし(ドキュメントのみの変更)
+
+### 未完了
+
+- ~~`eas update`による更新配信がPreview Buildへ届くことの確認~~ → 2026-10-27に完了
+- ~~ローカル(Windows)とビルドサーバーのfingerprintが一致するかの確認(`eas fingerprint:compare`)~~ → 2026-10-27に完了
+- `docs/TESTING-CHECKLIST.md`(回帰テスト用)は未コミットのまま
+
+### 次にやること
+
+- ~~JSの小さな変更で`eas update --channel preview --environment preview`を試し、iPhoneで反映されることを確認する~~ → 2026-10-27に完了
+- 長期間テストしない期間の後は、実機テスト前にSupabase(Paused)・Upstash(Deleted)の状態を先に確認する
+
+---
+
+## 2026-10-20 (EAS Preview Build / EAS Update への移行準備)
+
+`feature/100-program-finalization` を起点に `feature/eas-preview-update` ブランチを作成し、Expo Go + LAN接続から EAS Preview Build(Internal Distribution)+ EAS Update へ移行するための、Apple Developer承認前に行える準備作業を実施した。
+
+### 完了したこと
+
+- `npx expo install expo-updates` で `expo-updates`(~57.0.26)を導入
+- `eas init` で EASプロジェクト `@kazuhiko0316/drive-discovery-app` を作成し、`app.json` に `owner` / `extra.eas.projectId` を追加
+- `eas update:configure` で `updates.url` を設定。自動で付与された `runtimeVersion.policy: appVersion` は方針どおり `fingerprint` に変更。同コマンドが解決済みconfigから `android.permissions`(重複を含む)と `extra.router` を書き戻したため、意図しない変更として削除した
+- `eas.json` を新規作成(`preview`: internal distribution / channel `preview` / environment `preview`、`production`: channel `production` / autoIncrement、`appVersionSource: remote`)
+- `app.json` に `ios.bundleIdentifier`(`com.kazuhiko.drivediscovery`)と `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` を追加
+- AGENTS.md のSDK表記を v54 → v57 に修正(実際の依存は既にSDK 57)
+- README に EAS環境変数の登録手順・Preview Build/EAS Updateの手順を追記
+
+### 確認したこと
+
+- `npx tsc --noEmit`: エラーなし
+- `npm run lint`: エラーなし
+- `npx expo config --type public`: bundleIdentifier / projectId / runtimeVersion / updates.url が反映されていること
+- `npx expo start`: 開発サーバーが起動し、iOS向けmanifestに fingerprint の runtimeVersion が入ること、iOSバンドル(1854 modules)がエラーなくビルドされること
+- `npx expo-doctor`: SDK 57内のpatchバージョン差(expo 57.0.20 → 57.0.30 など16パッケージ)の1件のみ警告。今回の変更とは無関係のため据え置き
+
+### 未完了
+
+- Apple Developer Programの承認待ちのため、`eas build` / `eas submit` / 証明書・プロビジョニングの作成 / 実機(UDID)登録は未実施
+- EASの `preview` 環境への環境変数(`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`)の登録は未実施(手順はREADMEに記載)
+
+### 次にやること
+
+- Apple Developer承認後: 環境変数登録 → `eas device:create` → `eas build -p ios --profile preview` → iPhoneへインストール → `eas update` で更新が届くことを確認
+- 初回ビルド後、ローカル(Windows)とビルドサーバーでfingerprintが一致するか(`eas fingerprint:compare`)を確認する
+- 必要に応じて `npx expo install --check` でSDK 57内のpatch更新を別ブランチで適用
+
+---
+
 ## 2026-09-17g (Photo API真のlazy load・Spot Card整理・選択済みRoute維持でのOptional Stop追加)
 
 `feature/100-program-finalization` ブランチで、実機テストで見つかった複数の重大な不具合(1. Photo API request暴走・非表示Spotへの写真取得・同一Placeの重複取得、2. 今ドラSpot CardのUI重複・重なり、3. 選択済みRouteへOptional Stopを追加すると元Routeの主要構成が失われる重大な不具合、4. Route Compare/warning UIの密度・強さ、5. チップサイズ、6. 「半日」の解釈ゆれ)を修正した(commit・pushは未実施)。検索品質自体の大規模な再設計・新機能追加・高沢さんコード統合は今回行っていない。

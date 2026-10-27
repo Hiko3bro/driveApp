@@ -589,3 +589,11 @@
 - 理由: 「サーバーが返す構造から毎回再抽出する」設計は、サーバー側のレスポンス形状(このケースでは基本ルートがsuggestedPlaceを持たないこと)に暗黙に依存してしまい、その形状が変わる分岐(今回の場合は`lockToProvidedStops`という新しいレスポンスパス)が増えるたびに壊れるリスクを抱える。「一度確定した重要な状態(ここでは維持すべきanchor)は、クライアント側で明示的に名前付きの値として持ち続け、サーバーの応答を鵜呑みにしない」方が、複数ターンにわたる会話状態の一貫性を保ちやすい。
 - 代替案: サーバー側`toBasePlan()`に、via pointの名前をクライアントから受け取って`suggestedPlace`相当として返させる案も検討したが、via point自体はサーバーには座標としてしか渡っておらず名前を持たないため、結局クライアントが名前を知っている必要があり、対称性が悪いと判断して見送った。今回採用した「クライアント側で名前を付け直す」方式は、変更範囲が`app/drive-plan-chat.tsx`1ファイルに閉じており、サーバー側のレスポンス契約を変えないため影響範囲も小さい。
 - 教訓: 実機での不具合報告が「1回目の操作では直らなかったように見えるが、実は1回目はたまたま動いていて2回目以降で壊れる」という再現条件のズレを含むことがある。今回もcurlでの単発テストでは「1回の追加」しか検証しておらず、「連続して複数回追加する」という実際のユーザー体験に近いシナリオでの検証が不足していた。次回以降、状態を積み重ねる操作(追加・削除・変更を繰り返す)を検証する際は、最低2〜3回連続で操作した場合の挙動まで確認する。
+
+### 2026-10-20: 実機テストはExpo Go + LANから、EAS Preview Build(Internal Distribution)+ EAS Updateへ移行する。runtimeVersionはfingerprintポリシーとする
+
+- 背景: Expo Go + LAN接続では、PCとiPhoneが同じWi-Fiにいることが前提になり、外出先(実際のドライブ中)でのテストができない。またExpo Goに含まれないネイティブモジュールや本番に近い挙動の確認にも限界がある
+- 決定: iOS実機テストは `eas build --profile preview`(`distribution: internal`、channel `preview`)で作ったPreview Buildをインストールし、JS/アセットの変更は `eas update --channel preview` で配信する。配布方式はまずInternal Distribution(Ad Hoc、UDID登録)とし、TestFlightは後で検討する。`runtimeVersion` は `{ "policy": "fingerprint" }`、Bundle IDは `com.kazuhiko.drivediscovery`、EASプロジェクトのownerは個人アカウント `kazuhiko0316` とする
+- 理由: fingerprintポリシーはネイティブ依存・config plugin・権限設定の変化を自動検出してruntimeVersionを変えるため、手動でバージョンを上げ忘れて互換性のないJS更新が古いバイナリへ届く事故を防げる。Internal Distributionは手元の少数端末でのテストに最も手早く、App Store Connect側の準備を待たずに始められる
+- 代替案: `appVersion` ポリシー(`eas update:configure` の既定)は、ネイティブ変更時に `version` を上げ忘れると不整合が起きるため採用しなかった。Development Build(`expo-dev-client`)は開発サーバーへの接続が必要で「iPhone単体で動かす」という目的に合わないため、今回は導入しない
+- 注意: Supabaseの接続情報(`EXPO_PUBLIC_*`)はローカルの `.env` ではなくEASの環境変数(`preview` 環境)に登録し、`eas update` でも `--environment preview` を付けてビルドと同じ値を使う

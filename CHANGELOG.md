@@ -6,6 +6,15 @@
 
 ## [未リリース]
 
+### 追加(開発環境)
+
+- PCとiPhoneが同じWi-Fiにいなくても実機テストできるよう、EAS Preview Build(Internal Distribution)+ EAS Updateの設定を追加した(`eas.json`、`expo-updates`、`app.json`のBundle ID・runtimeVersion・更新URL)。iPhone単体でPreview Buildを起動し、今ドラのルート提案・ドライブ計画のAI相談が動作することを確認した。また、`preview`チャンネル経由のEAS UpdateがiPhoneに届き、JS/TSの変更を再ビルドなしで反映できることを確認した
+- READMEに、Supabaseを使う機能が一斉に失敗する場合のトラブルシューティング(SupabaseのPause / Upstash Redisの削除の確認方法と対処)を追加した
+
+### 修正(サーバー運用)
+
+- Supabaseプロジェクトの自動Pauseと、レート制限用Upstash Redisの削除により、今ドラのルート提案・ドライブ計画のAI相談などSupabaseを使う機能がすべて接続エラーになっていた。SupabaseをResumeし、新しいUpstash Redisを作成してSupabase Secretsを更新することで復旧した(アプリのコード変更・再ビルドなし)
+
 ### 変更(Visual Design)
 
 - アプリ全体のVisual DesignをDark Theme・Design System(色/角丸/余白/文字サイズの共通ルール)ベースへ作り直した。ホーム画面・下部ナビ・今ドラ・ドライブ計画チャット・Place候補カード・ルート提案カード・地図の見た目を統一し、チーム内の他アプリと同じプロダクトファミリーに見えるようにした。検索・提案・ルート生成の中身(条件反映・候補の質・地域制約)は変更していない

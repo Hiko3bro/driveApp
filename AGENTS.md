@@ -6,8 +6,8 @@
 
 Expoの仕様は頻繁に変わります。実装前に必ず該当バージョンの公式ドキュメントを確認してください。
 
-- 現在のSDKバージョン: v54
-- 参照先: https://docs.expo.dev/versions/v54.0.0/
+- 現在のSDKバージョン: v57
+- 参照先: https://docs.expo.dev/versions/v57.0.0/
 
 ## ブランチ・変更管理
 

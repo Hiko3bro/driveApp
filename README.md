@@ -66,6 +66,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 - `expo-image-picker` … 日記作成時に端末の写真ライブラリから写真を選ぶため追加(許可ダイアログの表示、許可拒否・Expo Go等で使えない場合のハンドリング)
 - `react-native-view-shot` … 共有カード(PHOTO/DATA/MEMORY)のプレビューを画像ファイルとして生成するため追加
 - `expo-sharing` … 生成した画像をOS標準の共有シート(Instagram/LINE/AirDrop/保存など)へ渡すため追加
+- `expo-updates` … EAS Updateで、iPhoneにインストール済みのPreview BuildへJS/アセットの更新を配信するため追加(`runtimeVersion`は`fingerprint`ポリシー)
 - `expo-crypto` … 端末単位の匿名ID(AIレート制限用、`x-install-id`)を暗号学的に安全に生成するため追加
 - Expo → Supabase Edge Functions(`ai-route-planning` / `ai-trip-chat` / `google-places` / `google-routes` / `drive-route-planner`) → OpenAI・Google Places API・Google Routes API という構成です。Expoアプリから外部APIへ直接接続することはなく、公開前提のSupabase publishable key(`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、実値は`.env`のみに置きコミットしません)だけをアプリに含めています。OpenAIには抽象化した嗜好・会話内容のみ(緯度経度・住所は送信しない)、Google Places/Routesには検索・計測に必要な範囲の座標のみを送信します。ドライブ計画のAI相談(`ai-trip-chat`、Drive Planning Assistant設計)も同じ方針で、AIが具体的な場所を示したい場合は`defaultOriginQuery`/`destinationQuery`という検索意図の文字列のみを返させ、実在確認は常にアプリ側がGoogle Places(Text Search/Nearby Search)経由で別途行います。今ドラ・ドライブ計画のAI相談には、現在日付から機械的に算出した季節の参考情報も渡していますが、開花・積雪等のリアルタイムの実況情報は取得していません。Google Mapsへの外部ナビ連携はAPIキー不要のUniversal URL(`services/navigation/google-maps-navigation.ts`)を使っています
 
@@ -75,6 +76,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 
 - 現在のリリース目標は **iOS TestFlight** です
 - iOSのExpo Go実機を正式な動作検証対象とし、リリース前の実機確認はiOSを基準に行います
+- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** でのiPhone単体の実機テストに移行しました。Preview Buildでの起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談、および`preview`チャンネル経由のEAS UpdateがiPhoneに届くこと(再ビルドなしでJS/TSの変更を反映できること)を実機で確認済みです(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
 - Android対応可能なReact Native / Expoの共通構造は維持しますが、Android実機は現時点で未検証のため動作保証の対象外です
 - Androidの実機検証と正式対応は将来のリリースで行う予定です
 
@@ -96,6 +98,50 @@ npx expo start
 - Android エミュレータ
 - iOS シミュレータ
 - [Expo Go](https://expo.dev/go)
+
+### EAS Preview Build / EAS Updateによる実機テスト
+
+Expo Go + LAN接続に代わり、iPhone単体でアプリを起動・更新できる構成です。設定は `eas.json`(`preview` / `production` プロファイル)と `app.json`(`ios.bundleIdentifier` = `com.kazuhiko.drivediscovery`、`runtimeVersion.policy` = `fingerprint`、`updates.url`)にあります。EASプロジェクトは `@kazuhiko0316/drive-discovery-app` です。
+
+> 初回のPreview Build(Internal Distribution)は作成・インストール済みで、iPhone単体での起動、Supabaseを使う機能(今ドラ・ドライブ計画のAI相談)の動作、`preview`チャンネル経由のEAS Updateの反映を確認しています。ローカル(Windows)と最新Preview Buildのfingerprintが一致することも確認済みです。Supabaseを使う機能がすべて失敗する場合は「トラブルシューティング」を参照してください。
+
+**1. EAS環境変数の登録(初回のみ)**
+
+`.env` は `.gitignore` 対象のためEAS Buildのクラウド環境には送られません。アプリが使う次の2つを、EASの `preview` 環境に登録します(実値はコード・コミット・ドキュメントに書かないこと)。
+
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+expo.dev のプロジェクトページ(Project settings › Environment variables)から、Environment に `preview`(必要なら `development` / `production` も)、Visibility に `Sensitive` を選んで登録するのが簡単です。CLIで登録する場合は次のとおりです(値がシェル履歴に残る点に注意)。
+
+```bash
+npx eas-cli env:create --environment preview --name EXPO_PUBLIC_SUPABASE_URL --value "<値>" --visibility sensitive
+npx eas-cli env:create --environment preview --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value "<値>" --visibility sensitive
+npx eas-cli env:list --environment preview   # 登録内容の確認
+```
+
+`eas env:pull` はローカルの `.env` を上書きするため、不用意に実行しないでください。
+
+**2. Preview Buildの作成とインストール(Apple Developer承認後)**
+
+```bash
+npx eas-cli device:create                       # iPhoneのUDIDを登録(表示されるURL/QRをiPhoneで開く)
+npx eas-cli build -p ios --profile preview      # 初回はApple IDでログインし、証明書・プロファイルをEASに管理させる
+```
+
+ビルド完了後に表示されるURL/QRをiPhoneで開いてインストールします。iPhone側で「設定 › プライバシーとセキュリティ › デベロッパモード」をONにする必要があります。
+
+**3. 更新の配信**
+
+```bash
+npx eas-cli update --channel preview --environment preview --message "変更内容"
+```
+
+- JS/TS・画像などの変更だけなら、再ビルドなしで `eas update` から配信できます
+- iPhoneでの反映: アプリを完全に終了 → 起動して10〜20秒待つ(裏で更新をダウンロード)→ もう一度完全に終了 → 起動、で反映されます(1回目の起動でダウンロード、2回目の起動で適用)
+- 配信前に `npx eas-cli fingerprint:compare --build-id <ビルドID>` で、ローカルとインストール済みビルドのfingerprintが一致していることを確認できます(一致しない場合、その更新はそのビルドには届きません)
+- 配信した更新を取り消したい場合は、手元のコードを戻したうえで、もう一度 `eas update` で「元に戻す更新」を配信します(手元のファイルを戻すだけではiPhone側は変わりません)
+- 依存パッケージの追加・config pluginや権限の変更など**ネイティブ側の変更**をした場合はfingerprintが変わるため、`eas build` で作り直してインストールし直します(古いバイナリには配信されません)
 
 ### iOS Expo Goでの確認手順
 
@@ -221,6 +267,23 @@ npx expo start --web  # Web向けバンドルが正常に起動するかの確�
 - ネイティブアプリのビルド設定(iOS/Android)はデフォルトのままです
 - Place写真(今ドラ・ドライブ計画チャットの候補カード)は、画面に実際に見えている候補(+直後に見えそうな1件程度)だけを対象に取得します(横スクロール/ページ送りで次のカードが見えた時点で取得)。同じ場所は、今ドラ・ドライブ計画のどちらの画面でも1回のアプリ利用中に1度だけ実際にAPIへ取得しに行き(Place IDをキーにしたメモリ内キャッシュ、端末再起動で消えます)、以降は再表示してもキャッシュから即座に表示します。1回のアプリ利用中に取得できる件数には上限があり、上限に達した以降は写真無しのプレースホルダー表示になりますが、スポット検索自体は引き続き通常どおり使えます
 - ドライブ計画チャットでルート候補を1つ選んだ後に温泉・カフェ等のOptional Stopを追加する操作は、必ず「選択中のルートの構成(主要な経由地点・海沿い/山道等のテーマ)を維持したまま1件だけ追加する」処理として扱います。「このルートで◯◯追加して」のような言い回しも同様に扱われ、「目的地を◯◯に変更して」のように明示的に目的地の変更を求めた場合のみ目的地が置き換わります
+
+## トラブルシューティング
+
+### Supabaseを使う機能がすべて失敗する(「ルートを取得できませんでした」「うまく接続できませんでした」等)
+
+今ドラ・ドライブ計画のAI相談など、Supabase Edge Functionを使う機能が個別ではなく**一斉に**失敗する場合は、アプリやビルドより先に、次のサーバー側の状態を確認してください。いずれもアプリのコード変更・再ビルドなしで復旧できます。
+
+1. **SupabaseがPausedになっていないか**
+   - 症状: SupabaseのProject URLのホスト名がDNSで解決できない(`ENOTFOUND` / NXDOMAIN)。Edge Functionにリクエストが届かない
+   - 確認: [Supabase Dashboard](https://supabase.com/dashboard) でプロジェクトの状態が **Paused** になっていないか。無料プランは一定期間使わないと自動でPauseされます
+   - 対処: **Restore / Resume** を実行し、状態が **Healthy** になるまで待つ(DNSへの反映まで数分かかることがあります)
+2. **Upstash RedisがDeletedになっていないか**
+   - 症状: Edge Functionには届くが、すべての関数(`drive-route-planner` / `ai-trip-chat` / `google-routes` / `google-places` 等)が、初めて使う端末からでも **HTTP 429 `RATE_LIMITED`** を返す。本当に回数上限に達した場合は `Retry-After` ヘッダーが付くが、Upstashに接続できない場合は付かない(`RATE_LIMIT_FAIL_OPEN=false` のため、レート制限を確認できないリクエストはすべて拒否される)
+   - 確認: [Upstash Console](https://console.upstash.com) で、レート制限用のRedisデータベースが存在し、Active か(Deletedになっていないか)
+   - 対処: 新しいRedisデータベースを作成し、その **REST API** 欄の値で、Supabase Dashboardの Edge Functions › Secrets にある `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` を上書きする。`RATE_LIMIT_HASH_SECRET` / `RATE_LIMIT_FAIL_OPEN` は変更しない。関数の再デプロイは不要
+3. **Preview Buildに接続設定が入っているか**(1・2で解決しない場合)
+   - EASの `preview` 環境に `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が登録されているか(`npx eas-cli env:list preview`。値を画面共有・チャットに出さないよう注意)
 
 ## 開発に参加するAIエージェント/開発者へ
 
