@@ -76,7 +76,7 @@ Visual DesignはDark Theme(`constants/design-tokens.ts`の共通トークンベ�
 
 - 現在のリリース目標は **iOS TestFlight** です
 - iOSのExpo Go実機を正式な動作検証対象とし、リリース前の実機確認はiOSを基準に行います
-- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** でのiPhone単体の実機テストに移行しました。Preview Buildでの起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談を実機で確認済みです(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
+- PCとiPhoneが同じWi-Fiにいることを前提としない実機テストのため、**EAS Preview Build(Internal Distribution)+ EAS Update** でのiPhone単体の実機テストに移行しました。Preview Buildでの起動・Supabase接続・今ドラのルート提案・ドライブ計画のAI相談、および`preview`チャンネル経由のEAS UpdateがiPhoneに届くこと(再ビルドなしでJS/TSの変更を反映できること)を実機で確認済みです(下記「EAS Preview Build / EAS Updateによる実機テスト」参照)
 - Android対応可能なReact Native / Expoの共通構造は維持しますが、Android実機は現時点で未検証のため動作保証の対象外です
 - Androidの実機検証と正式対応は将来のリリースで行う予定です
 
@@ -103,7 +103,7 @@ npx expo start
 
 Expo Go + LAN接続に代わり、iPhone単体でアプリを起動・更新できる構成です。設定は `eas.json`(`preview` / `production` プロファイル)と `app.json`(`ios.bundleIdentifier` = `com.kazuhiko.drivediscovery`、`runtimeVersion.policy` = `fingerprint`、`updates.url`)にあります。EASプロジェクトは `@kazuhiko0316/drive-discovery-app` です。
 
-> 初回のPreview Build(Internal Distribution)は作成・インストール済みで、iPhone単体での起動とSupabaseを使う機能の動作を確認しています。Supabaseを使う機能がすべて失敗する場合は「トラブルシューティング」を参照してください。
+> 初回のPreview Build(Internal Distribution)は作成・インストール済みで、iPhone単体での起動、Supabaseを使う機能(今ドラ・ドライブ計画のAI相談)の動作、`preview`チャンネル経由のEAS Updateの反映を確認しています。ローカル(Windows)と最新Preview Buildのfingerprintが一致することも確認済みです。Supabaseを使う機能がすべて失敗する場合は「トラブルシューティング」を参照してください。
 
 **1. EAS環境変数の登録(初回のみ)**
 
@@ -137,7 +137,10 @@ npx eas-cli build -p ios --profile preview      # 初回はApple IDでログイ�
 npx eas-cli update --channel preview --environment preview --message "変更内容"
 ```
 
-- JS/TS・画像などの変更だけなら `eas update` で配信できます。iPhoneでアプリを再起動すると更新を取得し、通常は次回起動時に反映されます
+- JS/TS・画像などの変更だけなら、再ビルドなしで `eas update` から配信できます
+- iPhoneでの反映: アプリを完全に終了 → 起動して10〜20秒待つ(裏で更新をダウンロード)→ もう一度完全に終了 → 起動、で反映されます(1回目の起動でダウンロード、2回目の起動で適用)
+- 配信前に `npx eas-cli fingerprint:compare --build-id <ビルドID>` で、ローカルとインストール済みビルドのfingerprintが一致していることを確認できます(一致しない場合、その更新はそのビルドには届きません)
+- 配信した更新を取り消したい場合は、手元のコードを戻したうえで、もう一度 `eas update` で「元に戻す更新」を配信します(手元のファイルを戻すだけではiPhone側は変わりません)
 - 依存パッケージの追加・config pluginや権限の変更など**ネイティブ側の変更**をした場合はfingerprintが変わるため、`eas build` で作り直してインストールし直します(古いバイナリには配信されません)
 
 ### iOS Expo Goでの確認手順

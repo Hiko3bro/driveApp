@@ -8,7 +8,7 @@
 
 ### 追加(開発環境)
 
-- PCとiPhoneが同じWi-Fiにいなくても実機テストできるよう、EAS Preview Build(Internal Distribution)+ EAS Updateの設定を追加した(`eas.json`、`expo-updates`、`app.json`のBundle ID・runtimeVersion・更新URL)。iPhone単体でPreview Buildを起動し、今ドラのルート提案・ドライブ計画のAI相談が動作することを確認した
+- PCとiPhoneが同じWi-Fiにいなくても実機テストできるよう、EAS Preview Build(Internal Distribution)+ EAS Updateの設定を追加した(`eas.json`、`expo-updates`、`app.json`のBundle ID・runtimeVersion・更新URL)。iPhone単体でPreview Buildを起動し、今ドラのルート提案・ドライブ計画のAI相談が動作することを確認した。また、`preview`チャンネル経由のEAS UpdateがiPhoneに届き、JS/TSの変更を再ビルドなしで反映できることを確認した
 - READMEに、Supabaseを使う機能が一斉に失敗する場合のトラブルシューティング(SupabaseのPause / Upstash Redisの削除の確認方法と対処)を追加した
 
 ### 修正(サーバー運用)

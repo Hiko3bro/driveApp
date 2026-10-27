@@ -21,6 +21,37 @@
 
 ---
 
+## 2026-10-27 (EAS Updateの実機反映確認・fingerprint一致確認)
+
+EAS Preview Build(Internal Distribution)をインストールしたiPhoneに、`preview`チャンネル経由のEAS Updateが届くことを確認した。これにより、JS/TSの変更は再ビルドなしでiPhoneへ反映できる運用が確立した。
+
+### 完了したこと
+
+- `eas fingerprint:compare`で、ローカル(Windows)と最新のPreview Build(コミット`def5839`)のfingerprintが一致することを確認(`1d68ad408b0f8fee935250fc91a566db74127380`)
+- 確認用の一時的な変更として、プロフィール画面「アプリについて」の表示を`ドライブ発見(100 Program版)✓`に1文字だけ変更し、`eas update --channel preview --environment preview`で配信(Update group `84301fbd-…`)。変更はコミットしていない
+- iPhoneで反映を確認した後、表示を元に戻し、同じ`preview`チャンネルへ元に戻す更新を配信(Update group `7bfa7961-…`)
+
+### 確認したこと
+
+- iPhone単体(PCと同じWi-Fiでなくても)でPreview Buildを起動できること
+- `preview`チャンネル経由のEAS UpdateがiPhoneに届き、アプリを2回起動し直す(1回目でダウンロード、2回目で適用)とプロフィール画面に✓が表示されること
+- JS/TSの小さな変更は、fingerprint(runtimeVersion)が変わらない限り、再ビルドなしでEAS Updateから反映できること
+- `eas update`実行時に、EASの`preview`環境から`EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`が読み込まれること(値は表示されない)
+- Supabase / Upstash復旧後、iPhoneで今ドラのルート提案・ドライブ計画のAI相談が正常に動作すること
+- `npx tsc --noEmit` / `npm run lint`: エラーなし
+
+### 未完了
+
+- `docs/TESTING-CHECKLIST.md`(回帰テスト用)は未コミットのまま
+- `feature/eas-preview-update`ブランチのpush・Pull Request作成
+
+### 次にやること
+
+- 今後のJS/TSの変更は、実装 → tsc/lint → `eas update --channel preview --environment preview` → iPhoneで確認、の流れで実機テストする
+- 依存パッケージ・config plugin・権限等のネイティブ側の変更時は、`eas fingerprint:compare`でfingerprintの変化を確認し、変わる場合は`eas build -p ios --profile preview`で作り直す
+
+---
+
 ## 2026-10-22 (iPhone Preview Build実機テスト・Supabase/Upstash障害の復旧)
 
 Apple Developer Programの登録完了を受け、EAS Preview Build(Internal Distribution)でのiPhone単体テストを開始した。テスト中にSupabaseを使う機能が一斉に接続エラーになったため原因を切り分け、サーバー側の設定変更のみで復旧した(アプリのコード変更・再ビルドなし)。
@@ -43,13 +74,13 @@ Apple Developer Programの登録完了を受け、EAS Preview Build(Internal Dis
 
 ### 未完了
 
-- `eas update`による更新配信がPreview Buildへ届くことの確認
-- ローカル(Windows)とビルドサーバーのfingerprintが一致するかの確認(`eas fingerprint:compare`)
+- ~~`eas update`による更新配信がPreview Buildへ届くことの確認~~ → 2026-10-27に完了
+- ~~ローカル(Windows)とビルドサーバーのfingerprintが一致するかの確認(`eas fingerprint:compare`)~~ → 2026-10-27に完了
 - `docs/TESTING-CHECKLIST.md`(回帰テスト用)は未コミットのまま
 
 ### 次にやること
 
-- JSの小さな変更で`eas update --channel preview --environment preview`を試し、iPhoneで反映されることを確認する
+- ~~JSの小さな変更で`eas update --channel preview --environment preview`を試し、iPhoneで反映されることを確認する~~ → 2026-10-27に完了
 - 長期間テストしない期間の後は、実機テスト前にSupabase(Paused)・Upstash(Deleted)の状態を先に確認する
 
 ---
